@@ -12,9 +12,10 @@ $BuildDir = "public"
 $ManifestFile = "manifest.xml"
 $RequiredFiles = @(
     "$BuildDir/index.html",
-    "$BuildDir/taskpane.html", 
-    "$BuildDir/bundle.js",
-    "$BuildDir/styles.css"
+    "$BuildDir/taskpane.html",
+    "$BuildDir/taskpane.bundle.js",
+    "$BuildDir/commands.bundle.js",
+    "$BuildDir/taskpane.css"
 )
 
 # Colors for output
@@ -35,8 +36,7 @@ function Test-Prerequisites {
     try {
         aws --version | Out-Null
         Write-Status "✓ AWS CLI found" $Green
-    }
-    catch {
+    } catch {
         Write-Status "✗ AWS CLI not found. Please install AWS CLI." $Red
         exit 1
     }
@@ -144,16 +144,13 @@ function Deploy-Assets {
         foreach ($file in $iconFiles) {
             $s3Key = "icons/$($file.Name)"
             $localPath = $file.FullName
-            
             if ($DryRun) {
                 Write-Status "Would upload: $localPath -> s3://$BucketName/$s3Key" $Yellow
-            }
-            else {
+            } else {
                 try {
                     aws s3 cp $localPath "s3://$BucketName/$s3Key" --region $Region
                     Write-Status "✓ Uploaded $s3Key" $Green
-                }
-                catch {
+                } catch {
                     Write-Status "✗ Failed to upload $s3Key" $Red
                     Write-Status $_.Exception.Message $Red
                 }
