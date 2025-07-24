@@ -24,6 +24,12 @@ class TaskpaneApp {
         this.currentAnalysis = null;
         this.currentResponse = null;
         this.sessionStartTime = Date.now();
+
+        // Model selection UI elements
+        this.modelServiceSelect = null;
+        this.baseUrlInput = null;
+        this.modelSelectGroup = null;
+        this.modelSelect = null;
     }
 
     async initialize() {
@@ -83,6 +89,20 @@ class TaskpaneApp {
         
         // Load settings into UI
         this.loadSettingsIntoUI();
+
+        // Model selection UI elements
+        this.modelServiceSelect = document.getElementById('model-service');
+        this.baseUrlInput = document.getElementById('base-url');
+        this.modelSelectGroup = document.getElementById('model-select-group');
+        this.modelSelect = document.getElementById('model-select');
+
+        // Wire up model discovery
+        if (this.modelServiceSelect && this.baseUrlInput && this.modelSelectGroup && this.modelSelect) {
+            this.modelServiceSelect.addEventListener('change', () => this.updateModelDropdown());
+            this.baseUrlInput.addEventListener('change', () => this.updateModelDropdown());
+            this.baseUrlInput.addEventListener('blur', () => this.updateModelDropdown());
+            this.updateModelDropdown();
+        }
     }
 
     bindEventListeners() {
@@ -180,6 +200,15 @@ class TaskpaneApp {
         document.getElementById('email-subject').textContent = email.subject || 'No Subject';
         document.getElementById('email-recipients').textContent = email.recipients || 'Unknown';
         document.getElementById('email-length').textContent = `${email.bodyLength || 0} characters`;
+        // Classification display logic
+        let classification = email.classification;
+        let classificationText;
+        if (!classification || classification.toLowerCase() === "unclassified") {
+            classificationText = "This email appears to be safe for AI processing.";
+        } else {
+            classificationText = classification;
+        }
+        document.getElementById("email-classification").textContent = classificationText;
     }
 
     async analyzeEmail() {
@@ -335,10 +364,11 @@ class TaskpaneApp {
 
     getAIConfiguration() {
         return {
-            service: document.getElementById('model-service').value,
+            service: this.modelServiceSelect ? this.modelServiceSelect.value : '',
             apiKey: document.getElementById('api-key').value,
             endpointUrl: document.getElementById('endpoint-url').value,
-            model: this.getSelectedModel()
+            baseUrl: this.baseUrlInput ? this.baseUrlInput.value : '',
+            model: (this.modelServiceSelect && this.modelServiceSelect.value === 'ollama' && this.modelSelect && this.modelSelect.value) ? this.modelSelect.value : this.getSelectedModel()
         };
     }
 
@@ -352,14 +382,54 @@ class TaskpaneApp {
     }
 
     getSelectedModel() {
-        const service = document.getElementById('model-service').value;
+        const service = this.modelServiceSelect ? this.modelServiceSelect.value : '';
         const modelMap = {
             'openai': 'gpt-4',
+            'ollama': '',
             'anthropic': 'claude-3-sonnet',
             'azure': 'gpt-4',
             'custom': 'custom'
         };
         return modelMap[service] || 'gpt-4';
+    }
+
+    async updateModelDropdown() {
+        if (!this.modelServiceSelect || !this.baseUrlInput || !this.modelSelectGroup || !this.modelSelect) return;
+        if (this.modelServiceSelect.value === 'ollama') {
+            this.modelSelectGroup.style.display = '';
+            this.modelSelect.innerHTML = '<option value="">Loading...</option>';
+            const baseUrl = this.baseUrlInput.value || 'http://localhost:11434';
+            const requestUrl = `${baseUrl.replace(/\/$/, '')}/api/tags`;
+            console.log('[Ollama Model Discovery] Requesting:', requestUrl);
+            let models = [];
+            try {
+                models = await AIService.fetchOllamaModels(baseUrl);
+                console.log('[Ollama Model Discovery] Models received:', models);
+                this.modelSelect.innerHTML = models.length
+                    ? models.map(m => `<option value="${m}">${m}</option>`).join('')
+                    : '<option value="">No models found</option>';
+                // Remove any previous error message
+                const errorDiv = document.getElementById('ollama-model-error');
+                if (errorDiv) errorDiv.remove();
+            } catch (err) {
+                console.error('[Ollama Model Discovery] Error:', err);
+                this.modelSelect.innerHTML = '<option value="">Error fetching models</option>';
+                // Show error in UI
+                let errorDiv = document.getElementById('ollama-model-error');
+                if (!errorDiv) {
+                    errorDiv = document.createElement('div');
+                    errorDiv.id = 'ollama-model-error';
+                    errorDiv.style.color = 'red';
+                    this.modelSelectGroup.appendChild(errorDiv);
+                }
+                errorDiv.textContent = `Error fetching models: ${err.message || err}`;
+            }
+        } else {
+            this.modelSelectGroup.style.display = 'none';
+            this.modelSelect.innerHTML = '';
+            const errorDiv = document.getElementById('ollama-model-error');
+            if (errorDiv) errorDiv.remove();
+        }
     }
 
     displayAnalysis(analysis) {

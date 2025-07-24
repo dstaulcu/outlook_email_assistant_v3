@@ -1,26 +1,43 @@
-
 # PromptEmail Outlook Add-in Build & Deployment Script
 # This script builds the project and safely uploads only build assets to S3
-
-function Write-Status {
-    param([string]$Message, [string]$Color = "White")
-    Write-Host $Message -ForegroundColor $Color
-}
-
-Write-Status "Starting build process..." "Blue"
-try {
-    npm run build
-    Write-Status "✓ Build completed successfully" "Green"
-} catch {
-    Write-Status "✗ Build failed. Check errors above." "Red"
-    exit 1
-}
 
 param(
     [string]$BucketName = "293354421824-outlook-email-assistant",
     [string]$Region = "us-east-1",
     [switch]$DryRun = $false
 )
+
+
+function Write-Status {
+    param([string]$Message, [string]$Color = "White")
+    $validColors = @('Black','DarkBlue','DarkGreen','DarkCyan','DarkRed','DarkMagenta','DarkYellow','Gray','DarkGray','Blue','Green','Cyan','Red','Magenta','Yellow','White')
+    if (-not $Color -or ($validColors -notcontains $Color)) {
+        $Color = 'White'
+    }
+    Write-Host $Message -ForegroundColor $Color
+}
+
+Write-Status "Starting build process..." "Blue"
+
+# Run npm build and capture output
+$buildOutput = $null
+$buildError = $null
+$buildSucceeded = $false
+try {
+    $buildOutput = & npm run build 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Status "✓ Build completed successfully" "Green"
+        $buildSucceeded = $true
+    } else {
+        Write-Status "✗ Build failed. See details below:" "Red"
+        Write-Host $buildOutput
+        exit 1
+    }
+} catch {
+    Write-Status "✗ Exception during build: $_" "Red"
+    if ($buildOutput) { Write-Host $buildOutput }
+    exit 1
+}
 
 # Configuration
 $BuildDir = "public"

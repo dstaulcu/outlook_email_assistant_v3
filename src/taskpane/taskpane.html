@@ -66,6 +66,10 @@
                         <label>Length:</label>
                         <span id="email-length" class="summary-value">-</span>
                     </div>
+                    <div class="summary-item">
+                        <label>Classification:</label>
+                        <span id="email-classification" class="summary-value">-</span>
+                    </div>
                 </div>
             </section>
 
@@ -77,11 +81,23 @@
                     <label for="model-service">Model Service:</label>
                     <select id="model-service" class="form-control" aria-describedby="model-service-help">
                         <option value="openai">OpenAI GPT</option>
-                        <option value="anthropic">Anthropic Claude</option>
-                        <option value="azure">Azure OpenAI</option>
-                        <option value="custom">Custom Endpoint</option>
+                        <option value="ollama">Ollama</option>
                     </select>
-                    <small id="model-service-help" class="help-text">Select your preferred AI service</small>
+                    <small id="model-service-help" class="help-text">Only OpenAI and Ollama model services are supported</small>
+                </div>
+
+                <div id="base-url-group" class="config-group">
+                    <label for="base-url">Model Provider Base URL:</label>
+                    <input type="url" id="base-url" class="form-control" placeholder="http://localhost:11434" aria-label="Base URL for model provider">
+                    <small id="base-url-help" class="help-text">Set the base URL for your model provider (e.g., Ollama)</small>
+                </div>
+
+                <div id="model-select-group" class="config-group" style="display:none;">
+                    <label for="model-select">Model:</label>
+                    <select id="model-select" class="form-control" aria-label="Select model">
+                        <option value="">Select a model</option>
+                    </select>
+                    <small class="help-text">Select a model from your Ollama instance</small>
                 </div>
 
                 <div id="custom-endpoint" class="config-group hidden">

@@ -12,23 +12,23 @@
   
   <!-- Version. Updates from the store only get triggered if there is a version change. -->
   <Version>1.0.0.0</Version>
-  <ProviderName>PromptEmail Team</ProviderName>
+  <ProviderName>David E. Staulcup</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   
   <!-- The display name of your add-in. Used on the store and various places of the Office UI such as the add-ins dialog. -->
   <DisplayName DefaultValue="PromptEmail" />
-  <Description DefaultValue="AI-Powered Email Analysis and Response Assistant"/>
+  <Description DefaultValue="AI-Powered Email Response and Composition Assistant."/>
   
   <!-- Icon for your add-in. Used on installation screens and the add-ins dialog. -->
-  <IconUrl DefaultValue="https://293354421824-outlook-email-assistant.s3-website-us-east-1.amazonaws.com/icons/icon-32.png"/>
-  <HighResolutionIconUrl DefaultValue="https://293354421824-outlook-email-assistant.s3-website-us-east-1.amazonaws.com/icons/icon-128.png"/>
+  <IconUrl DefaultValue="https://293354421824-outlook-email-assistant.s3.amazonaws.com/icons/icon-32.png"/>
+  <HighResolutionIconUrl DefaultValue="https://293354421824-outlook-email-assistant.s3.amazonaws.com/icons/icon-128.png"/>
   
   <!-- If you plan to submit this add-in to the Office Store, uncomment the SupportUrl element below -->
   <!-- <SupportUrl DefaultValue="[Insert the URL of a page that provides support information for the app]"> -->
   
   <!-- Domains that will be allowed when navigating. For example, if you use ShowTaskpane and then have an href link, navigation will only be allowed if the domain is on this list. -->
   <AppDomains>
-    <AppDomain>https://293354421824-outlook-email-assistant.s3-website-us-east-1.amazonaws.com</AppDomain>
+    <AppDomain>https://293354421824-outlook-email-assistant.s3.amazonaws.com</AppDomain>
   </AppDomains>
   
   <!-- End Basic Settings. -->
@@ -45,7 +45,7 @@
   <FormSettings>
     <Form xsi:type="ItemRead">
       <DesktopSettings>
-        <SourceLocation DefaultValue="https://293354421824-outlook-email-assistant.s3-website-us-east-1.amazonaws.com/taskpane.html"/>
+        <SourceLocation DefaultValue="https://293354421824-outlook-email-assistant.s3.amazonaws.com/taskpane.html"/>
         <RequestedHeight>250</RequestedHeight>
       </DesktopSettings>
     </Form>
@@ -125,20 +125,20 @@
 
       <Resources>
         <bt:Images>
-          <bt:Image id="Icon.16x16" DefaultValue="https://293354421824-outlook-email-assistant.s3-website-us-east-1.amazonaws.com/icons/icon-16.png"/>
-          <bt:Image id="Icon.32x32" DefaultValue="https://293354421824-outlook-email-assistant.s3-website-us-east-1.amazonaws.com/icons/icon-32.png"/>
-          <bt:Image id="Icon.80x80" DefaultValue="https://293354421824-outlook-email-assistant.s3-website-us-east-1.amazonaws.com/icons/icon-80.png"/>
+          <bt:Image id="Icon.16x16" DefaultValue="https://293354421824-outlook-email-assistant.s3.amazonaws.com/icons/icon-16.png"/>
+          <bt:Image id="Icon.32x32" DefaultValue="https://293354421824-outlook-email-assistant.s3.amazonaws.com/icons/icon-32.png"/>
+          <bt:Image id="Icon.80x80" DefaultValue="https://293354421824-outlook-email-assistant.s3.amazonaws.com/icons/icon-80.png"/>
         </bt:Images>
         <bt:Urls>
-          <bt:Url id="Commands.Url" DefaultValue="https://293354421824-outlook-email-assistant.s3-website-us-east-1.amazonaws.com/index.html" />
-          <bt:Url id="Taskpane.Url" DefaultValue="https://293354421824-outlook-email-assistant.s3-website-us-east-1.amazonaws.com/taskpane.html" />
+          <bt:Url id="Commands.Url" DefaultValue="https://293354421824-outlook-email-assistant.s3.amazonaws.com/taskpane.html" />
+          <bt:Url id="Taskpane.Url" DefaultValue="https://293354421824-outlook-email-assistant.s3.amazonaws.com/taskpane.html" />
         </bt:Urls>
         <bt:ShortStrings>
           <bt:String id="GroupLabel" DefaultValue="PromptEmail"/>
-          <bt:String id="TaskpaneButton.Label" DefaultValue="Analyze Email"/>
+          <bt:String id="TaskpaneButton.Label" DefaultValue="Prompt Email"/>
         </bt:ShortStrings>
         <bt:LongStrings>
-          <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Open PromptEmail AI assistant to analyze and respond to emails"/>
+          <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Open PromptEmail AI assistant to compose and respond to emails"/>
         </bt:LongStrings>
       </Resources>
     </VersionOverrides>

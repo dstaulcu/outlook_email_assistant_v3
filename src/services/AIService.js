@@ -11,6 +11,12 @@ export class AIService {
                 model: 'gpt-4',
                 maxTokens: 4000
             },
+            ollama: {
+                endpoint: 'http://localhost:11434/api/chat', // Default Ollama base_url
+                model: 'llama2', // Default Ollama model
+                apiKey: '', // Ollama does not require apiKey by default
+                maxTokens: 4000
+            },
             anthropic: {
                 endpoint: 'https://api.anthropic.com/v1/messages',
                 model: 'claude-3-sonnet-20240229',
@@ -30,6 +36,25 @@ export class AIService {
      * @param {Object} config - AI configuration
      * @returns {Promise<Object>} Analysis results
      */
+    /**
+     * Fetch available models from Ollama using /api/tags
+     * @param {string} baseUrl - The base URL for Ollama
+     * @returns {Promise<Array>} - Array of model names
+     */
+    static async fetchOllamaModels(baseUrl) {
+        try {
+            const url = `${baseUrl.replace(/\/$/, '')}/api/tags`;
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`Failed to fetch models: ${response.status}`);
+            const data = await response.json();
+            // Ollama returns { models: [{ name: ... }, ...] }
+            return (data.models || []).map(m => m.name);
+        } catch (err) {
+            console.error('Error fetching Ollama models:', err);
+            return [];
+        }
+    }
+    
     async analyzeEmail(emailData, config) {
         const prompt = this.buildAnalysisPrompt(emailData);
         
@@ -221,17 +246,33 @@ Please provide the refined email response text only.`;
         if (service === 'custom') {
             return this.callCustomEndpoint(prompt, config);
         }
-        
+
         const serviceConfig = this.supportedServices[service];
         if (!serviceConfig) {
             throw new Error(`Unsupported AI service: ${service}`);
         }
 
-        const requestBody = this.buildRequestBody(prompt, service, config);
-        const headers = this.buildHeaders(service, config);
+        let endpoint = serviceConfig.endpoint;
+        if (service === 'azure' && config.endpointUrl) {
+            endpoint = config.endpointUrl;
+        }
+        if (service === 'ollama' && config.baseUrl) {
+            endpoint = config.baseUrl;
+        }
 
-        const endpoint = service === 'azure' ? config.endpointUrl : serviceConfig.endpoint;
-        
+        let requestBody = this.buildRequestBody(prompt, service, config);
+        let headers = this.buildHeaders(service, config);
+
+        // Ollama does not require apiKey, and uses a different request format
+        if (service === 'ollama') {
+            requestBody = {
+                model: config.model || serviceConfig.model,
+                messages: [{ role: 'user', content: prompt }],
+                stream: false
+            };
+            headers = { 'Content-Type': 'application/json' };
+        }
+
         const response = await fetch(endpoint, {
             method: 'POST',
             headers: headers,
@@ -350,32 +391,15 @@ Please provide the refined email response text only.`;
             case 'openai':
             case 'azure':
                 headers['Authorization'] = `Bearer ${config.apiKey}`;
-                break;
-                
-            case 'anthropic':
-                headers['x-api-key'] = config.apiKey;
-                headers['anthropic-version'] = '2023-06-01';
-                break;
-        }
-
-        return headers;
-    }
-
-    /**
-     * Extracts response text from API response
-     * @param {Object} data - API response data
-     * @param {string} service - AI service name
-     * @returns {string} Response text
-     */
-    extractResponseText(data, service) {
-        switch (service) {
+// Fetch available models from Ollama using /api/tags
             case 'openai':
             case 'azure':
                 return data.choices?.[0]?.message?.content || '';
-                
+            case 'ollama':
+                // Ollama returns response in data.message.content
+                return data.message?.content || '';
             case 'anthropic':
                 return data.content?.[0]?.text || '';
-                
             default:
                 throw new Error(`Unsupported service for response extraction: ${service}`);
         }
