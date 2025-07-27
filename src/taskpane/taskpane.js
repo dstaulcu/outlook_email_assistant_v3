@@ -11,6 +11,20 @@ import { AccessibilityManager } from '../ui/AccessibilityManager';
 import { UIController } from '../ui/UIController';
 
 class TaskpaneApp {
+    switchToResponseTab() {
+        // Switch to the response tab in the UI
+        const responseTabButton = document.querySelector('.tab-button[aria-controls="response-tab"]');
+        if (responseTabButton) {
+            responseTabButton.click();
+        }
+    }
+    showResponseSection() {
+        // Show the response section in the UI
+        const responseSection = document.getElementById('response-section');
+        if (responseSection) {
+            responseSection.classList.remove('hidden');
+        }
+    }
     constructor() {
         this.emailAnalyzer = new EmailAnalyzer();
         this.aiService = new AIService();
@@ -34,6 +48,25 @@ class TaskpaneApp {
 
     async initialize() {
         try {
+        // Show/hide Analyze Email button based on whether a reply/compose is in progress
+        const analyzeBtn = document.getElementById('analyze-email');
+        if (analyzeBtn) {
+            let isCompose = false;
+            try {
+                // Compose mode if setAsync is available (reply/forward/compose window)
+                isCompose = (
+                    typeof Office !== 'undefined' &&
+                    Office.context &&
+                    Office.context.mailbox &&
+                    Office.context.mailbox.item &&
+                    Office.context.mailbox.item.body &&
+                    typeof Office.context.mailbox.item.body.setAsync === 'function'
+                );
+            } catch (e) {
+                isCompose = false;
+            }
+            analyzeBtn.style.display = isCompose ? '' : 'none';
+        }
             // Initialize Office.js
             await this.initializeOffice();
             
@@ -93,15 +126,38 @@ class TaskpaneApp {
         // Model selection UI elements
         this.modelServiceSelect = document.getElementById('model-service');
         this.baseUrlInput = document.getElementById('base-url');
+        // Disable autocomplete for base-url input
+        if (this.baseUrlInput) {
+            this.baseUrlInput.setAttribute('autocomplete', 'off');
+        }
         this.modelSelectGroup = document.getElementById('model-select-group');
         this.modelSelect = document.getElementById('model-select');
 
-        // Wire up model discovery
+        // Hide AI config placeholder in main UI by default
+        const aiConfigPlaceholder = document.getElementById('ai-config-placeholder');
+        if (aiConfigPlaceholder) {
+            aiConfigPlaceholder.classList.add('hidden');
+            aiConfigPlaceholder.innerHTML = '';
+        }
+
+        // Wire up model discovery and OpenAI model select visibility
+        const openaiModelGroup = document.getElementById('openai-model-group');
+        const openaiModelSelect = document.getElementById('openai-model-select');
         if (this.modelServiceSelect && this.baseUrlInput && this.modelSelectGroup && this.modelSelect) {
-            this.modelServiceSelect.addEventListener('change', () => this.updateModelDropdown());
+            this.modelServiceSelect.addEventListener('change', () => {
+                this.updateModelDropdown();
+                // Show OpenAI model select only if OpenAI is selected
+                if (openaiModelGroup) {
+                    openaiModelGroup.style.display = this.modelServiceSelect.value === 'openai' ? '' : 'none';
+                }
+            });
             this.baseUrlInput.addEventListener('change', () => this.updateModelDropdown());
             this.baseUrlInput.addEventListener('blur', () => this.updateModelDropdown());
             this.updateModelDropdown();
+            // Set initial OpenAI model group visibility
+            if (openaiModelGroup) {
+                openaiModelGroup.style.display = this.modelServiceSelect.value === 'openai' ? '' : 'none';
+            }
         }
     }
 
@@ -117,6 +173,19 @@ class TaskpaneApp {
         
         // Response actions
         document.getElementById('copy-response').addEventListener('click', () => this.copyResponse());
+        // Detect environment and set default model service using S3 bucket prefix in URL (startsWith)
+        try {
+            const url = window.location.href;
+            if (url.startsWith('https://293354421824-')) {
+                document.getElementById('model-service').value = 'ollama';
+                console.log('[Env Detect] Home mode detected (URL starts with "https://293354421824-")');
+            } else {
+                document.getElementById('model-service').value = 'openai';
+                console.log('[Env Detect] Work mode detected (URL does not start with "https://293354421824-")');
+            }
+        } catch (e) {
+            console.log('[Env Detect] Error detecting environment from URL:', e);
+        }
         document.getElementById('insert-response').addEventListener('click', () => this.insertResponse());
         
         // Settings
@@ -363,12 +432,22 @@ class TaskpaneApp {
     }
 
     getAIConfiguration() {
+        let model = this.getSelectedModel();
+        // If OpenAI is selected, use the OpenAI model select value
+        if (this.modelServiceSelect && this.modelServiceSelect.value === 'openai') {
+            const openaiModelSelect = document.getElementById('openai-model-select');
+            if (openaiModelSelect && openaiModelSelect.value) {
+                model = openaiModelSelect.value;
+            }
+        } else if (this.modelServiceSelect && this.modelServiceSelect.value === 'ollama' && this.modelSelect && this.modelSelect.value) {
+            model = this.modelSelect.value;
+        }
         return {
             service: this.modelServiceSelect ? this.modelServiceSelect.value : '',
             apiKey: document.getElementById('api-key').value,
             endpointUrl: document.getElementById('endpoint-url').value,
             baseUrl: this.baseUrlInput ? this.baseUrlInput.value : '',
-            model: (this.modelServiceSelect && this.modelServiceSelect.value === 'ollama' && this.modelSelect && this.modelSelect.value) ? this.modelSelect.value : this.getSelectedModel()
+            model
         };
     }
 
@@ -395,6 +474,9 @@ class TaskpaneApp {
 
     async updateModelDropdown() {
         if (!this.modelServiceSelect || !this.baseUrlInput || !this.modelSelectGroup || !this.modelSelect) return;
+        const aiConfigPlaceholder = document.getElementById('ai-config-placeholder');
+        const openaiModelGroup = document.getElementById('openai-model-group');
+        const openaiModelSelect = document.getElementById('openai-model-select');
         if (this.modelServiceSelect.value === 'ollama') {
             this.modelSelectGroup.style.display = '';
             this.modelSelect.innerHTML = '<option value="">Loading...</option>';
@@ -411,6 +493,11 @@ class TaskpaneApp {
                 // Remove any previous error message
                 const errorDiv = document.getElementById('ollama-model-error');
                 if (errorDiv) errorDiv.remove();
+                // Hide AI config placeholder in main UI if model discovery succeeds
+                if (aiConfigPlaceholder) {
+                    aiConfigPlaceholder.classList.add('hidden');
+                    aiConfigPlaceholder.innerHTML = '';
+                }
             } catch (err) {
                 console.error('[Ollama Model Discovery] Error:', err);
                 this.modelSelect.innerHTML = '<option value="">Error fetching models</option>';
@@ -423,12 +510,55 @@ class TaskpaneApp {
                     this.modelSelectGroup.appendChild(errorDiv);
                 }
                 errorDiv.textContent = `Error fetching models: ${err.message || err}`;
+                // Show AI config placeholder in main UI if model discovery fails
+                if (aiConfigPlaceholder) {
+                    aiConfigPlaceholder.innerHTML = `<div class='ai-config-error'>Model discovery failed. Please check your AI configuration in Settings.</div>`;
+                    aiConfigPlaceholder.classList.remove('hidden');
+                }
+            }
+        } else if (this.modelServiceSelect.value === 'openai' && openaiModelGroup && openaiModelSelect) {
+            // Try to fetch models from OpenAI-compatible endpoint
+            openaiModelGroup.style.display = '';
+            openaiModelSelect.innerHTML = '<option value="">Loading...</option>';
+            let endpoint = this.baseUrlInput && this.baseUrlInput.value ? this.baseUrlInput.value : 'https://api.openai.com/v1';
+            if (endpoint.endsWith('/')) endpoint = endpoint.slice(0, -1);
+            const apiKey = document.getElementById('api-key').value;
+            try {
+                const response = await fetch(`${endpoint}/v1/models`, {
+                    headers: {
+                        'Authorization': `Bearer ${apiKey}`
+                    }
+                });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.json();
+                const models = (data.data || []).map(m => m.id).filter(id => id.startsWith('gpt-') || id.startsWith('ft-') || id.startsWith('davinci') || id.startsWith('babbage') || id.startsWith('curie'));
+                if (models.length) {
+                    openaiModelSelect.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
+                } else {
+                    openaiModelSelect.innerHTML = '<option value="">No models found</option>';
+                }
+            } catch (err) {
+                console.error('[OpenAI Model Discovery] Error:', err);
+                // Fallback to static list
+                openaiModelSelect.innerHTML = [
+                    '<option value="gpt-4">gpt-4</option>',
+                    '<option value="gpt-4o">gpt-4o</option>',
+                    '<option value="gpt-3.5-turbo">gpt-3.5-turbo</option>',
+                    '<option value="gpt-3.5-turbo-16k">gpt-3.5-turbo-16k</option>'
+                ].join('');
             }
         } else {
             this.modelSelectGroup.style.display = 'none';
             this.modelSelect.innerHTML = '';
             const errorDiv = document.getElementById('ollama-model-error');
             if (errorDiv) errorDiv.remove();
+            // Hide AI config placeholder in main UI for non-Ollama
+            if (aiConfigPlaceholder) {
+                aiConfigPlaceholder.classList.add('hidden');
+                aiConfigPlaceholder.innerHTML = '';
+            }
+            // Hide OpenAI model group for non-OpenAI
+            if (openaiModelGroup) openaiModelGroup.style.display = 'none';
         }
     }
 
@@ -440,10 +570,12 @@ class TaskpaneApp {
                 <ul>
                     ${analysis.keyPoints.map(point => `<li>${this.escapeHtml(point)}</li>`).join('')}
                 </ul>
-                
+
                 <h3>Sentiment</h3>
-                <p>${this.escapeHtml(analysis.sentiment)}</p>
-                
+                <ul>
+                    <li>${this.escapeHtml(analysis.sentiment)}</li>
+                </ul>
+
                 <h3>Recommended Actions</h3>
                 <ul>
                     ${analysis.actions.map(action => `<li>${this.escapeHtml(action)}</li>`).join('')}
@@ -484,7 +616,17 @@ class TaskpaneApp {
     async insertResponse() {
         try {
             const responseText = document.getElementById('response-text-content').textContent;
-            
+            console.log('[InsertResponse] Response text:', responseText);
+            if (!responseText || responseText.trim().length === 0) {
+                this.uiController.showError('No response text to insert.');
+                return;
+            }
+            // Check Office.js and mailbox context
+            if (typeof Office === 'undefined' || !Office.context || !Office.context.mailbox || !Office.context.mailbox.item || !Office.context.mailbox.item.body || typeof Office.context.mailbox.item.body.setAsync !== 'function') {
+                this.uiController.showError('Office.js mailbox context is not available. Please run this add-in inside Outlook.');
+                console.error('[InsertResponse] Office.js mailbox context missing or setAsync not available.');
+                return;
+            }
             // Use Office.js to insert into email body
             Office.context.mailbox.item.body.setAsync(
                 responseText,
@@ -493,6 +635,7 @@ class TaskpaneApp {
                     if (result.status === Office.AsyncResultStatus.Succeeded) {
                         this.uiController.showStatus('Response inserted into email.');
                     } else {
+                        console.error('[InsertResponse] Office.js error:', result);
                         this.uiController.showError('Failed to insert response into email.');
                     }
                 }
@@ -501,14 +644,6 @@ class TaskpaneApp {
             console.error('Failed to insert response:', error);
             this.uiController.showError('Failed to insert response into email.');
         }
-    }
-
-    showResponseSection() {
-        document.getElementById('response-section').classList.remove('hidden');
-    }
-
-    switchToResponseTab() {
-        document.getElementById('tab-response').click();
     }
 
     showRefineButton() {
@@ -545,9 +680,11 @@ class TaskpaneApp {
 
     loadSettingsIntoUI() {
         const settings = this.settingsManager.getSettings();
-        
+
         // Load form values
         Object.keys(settings).forEach(key => {
+            // Never load custom-instructions from settings
+            if (key === 'custom-instructions') return;
             const element = document.getElementById(key);
             if (element) {
                 if (element.type === 'checkbox') {
@@ -557,16 +694,28 @@ class TaskpaneApp {
                 }
             }
         });
-        
+
+        // Always blank custom-instructions on load
+        const customInstructions = document.getElementById('custom-instructions');
+        if (customInstructions) {
+            customInstructions.value = '';
+        }
+
+        // Ensure base-url input defaults to http://localhost:11434 if not set
+        const baseUrlInput = document.getElementById('base-url');
+        if (baseUrlInput && (!settings['base-url'] || !baseUrlInput.value)) {
+            baseUrlInput.value = 'http://localhost:11434';
+        }
+
         // Trigger change events
         if (settings['model-service']) {
             document.getElementById('model-service').dispatchEvent(new Event('change'));
         }
-        
+
         if (settings['high-contrast']) {
             this.toggleHighContrast(true);
         }
-        
+
         if (settings['screen-reader-mode']) {
             this.toggleScreenReaderMode(true);
         }
@@ -598,4 +747,20 @@ Office.onReady(() => {
     app.initialize().catch(error => {
         console.error('Failed to initialize application:', error);
     });
+
+    // Add logic for Reset Settings button
+    const resetBtn = document.getElementById('reset-settings');
+    if (resetBtn) {
+        resetBtn.addEventListener('click', () => {
+            // Remove settings from localStorage
+            localStorage.removeItem('settings');
+            // Optionally clear Office.js roaming settings
+            if (typeof Office !== 'undefined' && Office.context && Office.context.roamingSettings) {
+                Office.context.roamingSettings.remove('settings');
+                Office.context.roamingSettings.saveAsync();
+            }
+            // Reload the app to reset UI
+            location.reload();
+        });
+    }
 });

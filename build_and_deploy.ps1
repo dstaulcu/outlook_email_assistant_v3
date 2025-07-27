@@ -10,7 +10,7 @@ param(
 
 function Write-Status {
     param([string]$Message, [string]$Color = "White")
-    $validColors = @('Black','DarkBlue','DarkGreen','DarkCyan','DarkRed','DarkMagenta','DarkYellow','Gray','DarkGray','Blue','Green','Cyan','Red','Magenta','Yellow','White')
+    $validColors = @('Black', 'DarkBlue', 'DarkGreen', 'DarkCyan', 'DarkRed', 'DarkMagenta', 'DarkYellow', 'Gray', 'DarkGray', 'Blue', 'Green', 'Cyan', 'Red', 'Magenta', 'Yellow', 'White')
     if (-not $Color -or ($validColors -notcontains $Color)) {
         $Color = 'White'
     }
@@ -28,12 +28,14 @@ try {
     if ($LASTEXITCODE -eq 0) {
         Write-Status "✓ Build completed successfully" "Green"
         $buildSucceeded = $true
-    } else {
+    }
+    else {
         Write-Status "✗ Build failed. See details below:" "Red"
         Write-Host $buildOutput
         exit 1
     }
-} catch {
+}
+catch {
     Write-Status "✗ Exception during build: $_" "Red"
     if ($buildOutput) { Write-Host $buildOutput }
     exit 1
@@ -51,7 +53,7 @@ $RequiredFiles = @(
 )
 
 # Colors for output
- # Colors are now set in Write-Status, so these variables are not needed
+# Colors are now set in Write-Status, so these variables are not needed
 
 function Test-Prerequisites {
     Write-Status "Checking prerequisites..." $Blue
@@ -60,7 +62,8 @@ function Test-Prerequisites {
     try {
         aws --version | Out-Null
         Write-Status "✓ AWS CLI found" $Green
-    } catch {
+    }
+    catch {
         Write-Status "✗ AWS CLI not found. Please install AWS CLI." $Red
         exit 1
     }
@@ -170,11 +173,13 @@ function Deploy-Assets {
             $localPath = $file.FullName
             if ($DryRun) {
                 Write-Status "Would upload: $localPath -> s3://$BucketName/$s3Key" $Yellow
-            } else {
+            }
+            else {
                 try {
                     aws s3 cp $localPath "s3://$BucketName/$s3Key" --region $Region
                     Write-Status "✓ Uploaded $s3Key" $Green
-                } catch {
+                }
+                catch {
                     Write-Status "✗ Failed to upload $s3Key" $Red
                     Write-Status $_.Exception.Message $Red
                 }

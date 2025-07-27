@@ -29,6 +29,7 @@ export class EmailAnalyzer {
                     return;
                 }
 
+                const userProfile = Office.context.mailbox.userProfile;
                 const emailData = {
                     subject: item.subject || '',
                     from: this.getFromAddress(item),
@@ -38,7 +39,8 @@ export class EmailAnalyzer {
                     date: item.dateTimeCreated ? new Date(item.dateTimeCreated) : new Date(),
                     hasAttachments: (item.attachments && item.attachments.length > 0),
                     itemType: item.itemType,
-                    conversationId: item.conversationId
+                    conversationId: item.conversationId,
+                    sender: userProfile ? `${userProfile.displayName} <${userProfile.emailAddress}>` : 'Unknown Sender'
                 };
 
                 resolve(emailData);

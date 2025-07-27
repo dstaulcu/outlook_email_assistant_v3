@@ -4,6 +4,27 @@
  */
 
 export class AIService {
+    /**
+     * Extracts the response text from the API response data for each service
+     * @param {Object} data - The response data from the API
+     * @param {string} service - The AI service name
+     * @returns {string} The extracted response text
+     */
+    extractResponseText(data, service) {
+        switch (service) {
+            case 'openai':
+            case 'azure':
+                return data.choices?.[0]?.message?.content || '';
+            case 'ollama':
+                // Ollama returns response in data.message.content
+                return data.message?.content || data.response || data.text || JSON.stringify(data);
+            case 'anthropic':
+                return data.content?.[0]?.text || '';
+            default:
+                // Fallback: try common fields or stringify
+                return data.response || data.text || data.content || JSON.stringify(data);
+        }
+    }
     constructor() {
         this.supportedServices = {
             openai: {
@@ -60,7 +81,10 @@ export class AIService {
         
         try {
             const response = await this.callAI(prompt, config, 'analysis');
-            return this.parseAnalysisResponse(response);
+            console.log('[AIService] Raw analysis response:', response);
+            const parsed = this.parseAnalysisResponse(response);
+            console.log('[AIService] Parsed analysis:', parsed);
+            return parsed;
         } catch (error) {
             console.error('Email analysis failed:', error);
             throw new Error('Failed to analyze email: ' + error.message);
@@ -176,35 +200,33 @@ Format your response as JSON with the following structure:
             5: 'urgent and immediate'
         };
 
-        let prompt = `Generate a professional email response based on the following context:
-
-**Original Email:**
-From: ${emailData.from}
-Subject: ${emailData.subject}
-Content: ${emailData.cleanBody || emailData.body}
-
-**Analysis Summary:**
-- Key Points: ${analysis.keyPoints?.join(', ') || 'Not analyzed'}
-- Sentiment: ${analysis.sentiment || 'Not analyzed'}
-- Recommended Strategy: ${analysis.responseStrategy || 'Not analyzed'}
-
-**Response Requirements:**
-- Length: ${lengthMap[config.length] || 'medium length'}
-- Tone: ${toneMap[config.tone] || 'professional'}
-- Urgency: ${urgencyMap[config.urgency] || 'appropriate'}`;
+        let prompt = `You are replying as: ${emailData.sender || 'Unknown Sender'} to: ${emailData.from}\n\n` +
+            `Generate a professional email response based on the following context:\n\n` +
+            `**Original Email:**\n` +
+            `From: ${emailData.from}\n` +
+            `Subject: ${emailData.subject}\n` +
+            `Content: ${emailData.cleanBody || emailData.body}\n\n` +
+            `**Analysis Summary:**\n` +
+            `- Key Points: ${analysis.keyPoints?.join(', ') || 'Not analyzed'}\n` +
+            `- Sentiment: ${analysis.sentiment || 'Not analyzed'}\n` +
+            `- Recommended Strategy: ${analysis.responseStrategy || 'Not analyzed'}\n\n` +
+            `**Response Requirements:**\n` +
+            `- Length: ${lengthMap[config.length] || 'medium length'}\n` +
+            `- Tone: ${toneMap[config.tone] || 'professional'}\n` +
+            `- Urgency: ${urgencyMap[config.urgency] || 'appropriate'}`;
 
         if (config.customInstructions && config.customInstructions.trim()) {
             prompt += `\n- Special Instructions: ${config.customInstructions}`;
         }
 
-        prompt += `\n\n**Output Requirements:**
-Please generate an appropriate email response that:
-1. Addresses the key points from the original email
-2. Matches the requested tone and length
-3. Is professional and well-structured
-4. Includes appropriate greetings and closings
-
-Return only the email response text, ready to be sent. Do not include subject line or email headers.`;
+        prompt += `\n\n**Output Requirements:**\n` +
+            `Please generate an appropriate email response that:\n` +
+            `1. Addresses the key points from the original email\n` +
+            `2. Matches the requested tone and length\n` +
+            `3. Is professional and well-structured\n` +
+            `4. Includes appropriate greetings and closings\n` +
+            `5. Uses proper paragraph formatting with blank lines (double newlines) between paragraphs.\n\n` +
+            `Return only the body of the email response, ready to be sent. Do not include subject line, email headers, or any introductory phrases such as 'Here's a suggested email response:' or similar. Output only the email content as it should appear in the reply.`;
 
         return prompt;
     }
@@ -242,7 +264,7 @@ Please provide the refined email response text only.`;
      */
     async callAI(prompt, config, type) {
         const service = config.service || 'openai';
-        
+
         if (service === 'custom') {
             return this.callCustomEndpoint(prompt, config);
         }
@@ -257,13 +279,14 @@ Please provide the refined email response text only.`;
             endpoint = config.endpointUrl;
         }
         if (service === 'ollama' && config.baseUrl) {
-            endpoint = config.baseUrl;
+            // Always use /api/chat or /api/generate, not the base URL
+            const base = config.baseUrl.replace(/\/$/, '');
+            endpoint = `${base}/api/chat`;
         }
 
-        let requestBody = this.buildRequestBody(prompt, service, config);
-        let headers = this.buildHeaders(service, config);
+        let requestBody;
+        let headers;
 
-        // Ollama does not require apiKey, and uses a different request format
         if (service === 'ollama') {
             requestBody = {
                 model: config.model || serviceConfig.model,
@@ -271,13 +294,31 @@ Please provide the refined email response text only.`;
                 stream: false
             };
             headers = { 'Content-Type': 'application/json' };
+        } else {
+            requestBody = this.buildRequestBody(prompt, service, config);
+            headers = this.buildHeaders(service, config);
         }
 
-        const response = await fetch(endpoint, {
+        // Debug: Log POST request body to console
+        console.log('[Ollama POST] Endpoint:', endpoint);
+        console.log('[Ollama POST] Request Body:', requestBody);
+        let response = await fetch(endpoint, {
             method: 'POST',
             headers: headers,
             body: JSON.stringify(requestBody)
         });
+
+        // Fallback to /api/generate if /api/chat fails with 405
+        if (service === 'ollama' && response.status === 405) {
+            const base = config.baseUrl.replace(/\/$/, '');
+            const fallbackEndpoint = `${base}/api/generate`;
+            console.warn('[Ollama Fallback] Retrying with /api/generate:', fallbackEndpoint);
+            response = await fetch(fallbackEndpoint, {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify(requestBody)
+            });
+        }
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -386,23 +427,14 @@ Please provide the refined email response text only.`;
         const headers = {
             'Content-Type': 'application/json'
         };
-
         switch (service) {
             case 'openai':
             case 'azure':
                 headers['Authorization'] = `Bearer ${config.apiKey}`;
-// Fetch available models from Ollama using /api/tags
-            case 'openai':
-            case 'azure':
-                return data.choices?.[0]?.message?.content || '';
-            case 'ollama':
-                // Ollama returns response in data.message.content
-                return data.message?.content || '';
-            case 'anthropic':
-                return data.content?.[0]?.text || '';
-            default:
-                throw new Error(`Unsupported service for response extraction: ${service}`);
+                break;
+            // Ollama and anthropic do not require Authorization header by default
         }
+        return headers;
     }
 
     /**
@@ -411,22 +443,26 @@ Please provide the refined email response text only.`;
      * @returns {Object} Parsed analysis
      */
     parseAnalysisResponse(responseText) {
+        // Try to extract and parse the first JSON object from the response
         try {
-            // Try to parse as JSON first
-            const parsed = JSON.parse(responseText);
-            return {
-                keyPoints: parsed.keyPoints || [],
-                sentiment: parsed.sentiment || 'Unable to determine',
-                intent: parsed.intent || 'Unable to determine',
-                urgencyLevel: parsed.urgencyLevel || 3,
-                urgencyReason: parsed.urgencyReason || 'Standard priority',
-                actions: parsed.actions || [],
-                responseStrategy: parsed.responseStrategy || 'Respond professionally'
-            };
+            let jsonMatch = responseText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                const parsed = JSON.parse(jsonMatch[0]);
+                return {
+                    keyPoints: parsed.keyPoints || [],
+                    sentiment: parsed.sentiment || 'Unable to determine',
+                    intent: parsed.intent || 'Unable to determine',
+                    urgencyLevel: parsed.urgencyLevel || 3,
+                    urgencyReason: parsed.urgencyReason || 'Standard priority',
+                    actions: parsed.actions || [],
+                    responseStrategy: parsed.responseStrategy || 'Respond professionally'
+                };
+            }
         } catch (error) {
-            // Fallback to text parsing
-            return this.parseAnalysisFromText(responseText);
+            // Ignore and fallback
         }
+        // Fallback to text parsing
+        return this.parseAnalysisFromText(responseText);
     }
 
     /**
@@ -452,10 +488,18 @@ Please provide the refined email response text only.`;
      * @returns {Object} Response object
      */
     parseResponseResult(responseText) {
+        // Normalize newlines: replace 2+ newlines with exactly two, and single \r\n or \r with \n
+        let text = responseText.trim();
+        // Convert \r\n and \r to \n
+        text = text.replace(/\r\n?/g, '\n');
+        // Replace 3+ newlines with exactly two
+        text = text.replace(/\n{3,}/g, '\n\n');
+        // Optionally, trim leading/trailing whitespace on each line
+        text = text.split('\n').map(line => line.trimEnd()).join('\n');
         return {
-            text: responseText.trim(),
+            text,
             generatedAt: new Date().toISOString(),
-            wordCount: responseText.trim().split(/\s+/).length
+            wordCount: text.split(/\s+/).length
         };
     }
 }

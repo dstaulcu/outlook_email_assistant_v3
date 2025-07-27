@@ -74,45 +74,7 @@
             </section>
 
             <!-- AI Configuration -->
-            <section class="ai-config" aria-labelledby="ai-config-title">
-                <h2 id="ai-config-title">AI Configuration</h2>
-                
-                <div class="config-group">
-                    <label for="model-service">Model Service:</label>
-                    <select id="model-service" class="form-control" aria-describedby="model-service-help">
-                        <option value="openai">OpenAI GPT</option>
-                        <option value="ollama">Ollama</option>
-                    </select>
-                    <small id="model-service-help" class="help-text">Only OpenAI and Ollama model services are supported</small>
-                </div>
-
-                <div id="base-url-group" class="config-group">
-                    <label for="base-url">Model Provider Base URL:</label>
-                    <input type="url" id="base-url" class="form-control" placeholder="http://localhost:11434" aria-label="Base URL for model provider">
-                    <small id="base-url-help" class="help-text">Set the base URL for your model provider (e.g., Ollama)</small>
-                </div>
-
-                <div id="model-select-group" class="config-group" style="display:none;">
-                    <label for="model-select">Model:</label>
-                    <select id="model-select" class="form-control" aria-label="Select model">
-                        <option value="">Select a model</option>
-                    </select>
-                    <small class="help-text">Select a model from your Ollama instance</small>
-                </div>
-
-                <div id="custom-endpoint" class="config-group hidden">
-                    <label for="endpoint-url">Custom Endpoint URL:</label>
-                    <input type="url" id="endpoint-url" class="form-control" 
-                           placeholder="https://your-api-endpoint.com">
-                </div>
-
-                <div class="config-group">
-                    <label for="api-key">API Key:</label>
-                    <input type="password" id="api-key" class="form-control" 
-                           placeholder="Enter your API key" aria-describedby="api-key-help">
-                    <small id="api-key-help" class="help-text">Your API key is stored securely and never logged</small>
-                </div>
-            </section>
+            <div id="ai-config-placeholder" class="hidden"></div>
 
             <!-- Quick Response Controls -->
             <section class="quick-controls" aria-labelledby="quick-controls-title">
@@ -236,7 +198,57 @@
         <!-- Settings Panel -->
         <aside id="settings-panel" class="settings-panel hidden" aria-labelledby="settings-title">
             <h2 id="settings-title">Settings</h2>
-            
+
+            <div class="settings-group">
+                <h3>AI Configuration</h3>
+                <div class="config-group">
+                    <label for="model-service">Model Service:</label>
+                    <select id="model-service" class="form-control" aria-describedby="model-service-help">
+                        <option value="openai">OpenAI GPT</option>
+                        <option value="ollama">Ollama</option>
+                    </select>
+                    <small id="model-service-help" class="help-text">Only OpenAI and Ollama model services are supported</small>
+                </div>
+
+                <div id="base-url-group" class="config-group">
+                    <label for="base-url">Model Provider Base URL:</label>
+                   <input type="url" id="base-url" class="form-control" placeholder="http://localhost:11434" aria-label="Base URL for model provider" autocomplete="new-password">
+                    <small id="base-url-help" class="help-text">Set the base URL for your model provider (e.g., Ollama)</small>
+                </div>
+
+                <div id="model-select-group" class="config-group" style="display:none;">
+                    <label for="model-select">Model:</label>
+                    <select id="model-select" class="form-control" aria-label="Select model">
+                        <option value="">Select a model</option>
+                    </select>
+                    <small class="help-text">Select a model from your Ollama instance</small>
+                </div>
+
+            <div id="openai-model-group" class="config-group" style="display:none;">
+                <label for="openai-model-select">OpenAI Model:</label>
+                <select id="openai-model-select" class="form-control" aria-label="Select OpenAI model">
+                    <option value="gpt-4">gpt-4</option>
+                    <option value="gpt-4o">gpt-4o</option>
+                    <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+                    <option value="gpt-3.5-turbo-16k">gpt-3.5-turbo-16k</option>
+                </select>
+                <small class="help-text">Select the OpenAI model to use</small>
+            </div>
+
+                <div id="custom-endpoint" class="config-group hidden">
+                    <label for="endpoint-url">Custom Endpoint URL:</label>
+                    <input type="url" id="endpoint-url" class="form-control" 
+                           placeholder="https://your-api-endpoint.com">
+                </div>
+
+                <div class="config-group">
+                    <label for="api-key">API Key:</label>
+                    <input type="password" id="api-key" class="form-control" 
+                           placeholder="Enter your API key" aria-describedby="api-key-help">
+                    <small id="api-key-help" class="help-text">Your API key is stored securely and never logged</small>
+                </div>
+            </div>
+
             <div class="settings-group">
                 <h3>Accessibility</h3>
                 <label class="checkbox-label">
@@ -269,6 +281,9 @@
 
             <button id="close-settings" class="btn btn-secondary" type="button">
                 Close Settings
+            </button>
+            <button id="reset-settings" class="btn btn-danger" type="button" style="margin-top:10px;">
+                Reset Settings
             </button>
         </aside>
 
