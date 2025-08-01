@@ -1,0 +1,14 @@
+{
+  "environments": {
+    "Dev": {
+      "publicBaseUrl": "https://293354421824-outlook-email-assistant-dev.s3-website-us-east-1.amazonaws.com",
+      "s3BucketUri": "s3://293354421824-outlook-email-assistant-dev",
+      "region": "us-east-1"
+    },
+    "Prd": {
+      "publicBaseUrl": "https://293354421824-outlook-email-assistant-prd.s3-website-us-east-1.amazonaws.com",
+      "s3BucketUri": "s3://293354421824-outlook-email-assistant-prd",
+      "region": "us-east-1"
+    }
+  }
+}

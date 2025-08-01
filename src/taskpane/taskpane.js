@@ -11,6 +11,29 @@ import { AccessibilityManager } from '../ui/AccessibilityManager';
 import { UIController } from '../ui/UIController';
 
 class TaskpaneApp {
+    async fetchDefaultProvidersConfig() {
+        // Fetch default-providers.json from public directory
+        try {
+            const response = await fetch('/default-providers.json');
+            if (!response.ok) throw new Error('Failed to fetch default-providers.json');
+            return await response.json();
+        } catch (e) {
+            console.warn('[Default Providers] Could not load default-providers.json:', e);
+            return {};
+        }
+    }
+    async fetchDefaultModelsConfig() {
+        // Fetch default-models.json from public directory
+        try {
+            const response = await fetch('/default-models.json');
+            if (!response.ok) throw new Error('Failed to fetch default-models.json');
+            return await response.json();
+        } catch (e) {
+            console.warn('[Default Models] Could not load default-models.json:', e);
+            return {};
+        }
+    }
+
     switchToResponseTab() {
         // Switch to the response tab in the UI
         const responseTabButton = document.querySelector('.tab-button[aria-controls="response-tab"]');
@@ -41,7 +64,6 @@ class TaskpaneApp {
 
         // Model selection UI elements
         this.modelServiceSelect = null;
-        this.baseUrlInput = null;
         this.modelSelectGroup = null;
         this.modelSelect = null;
     }
@@ -73,6 +95,8 @@ class TaskpaneApp {
             // Load user settings
             await this.settingsManager.loadSettings();
             
+            // Load provider config before UI setup
+            this.defaultProvidersConfig = await this.fetchDefaultProvidersConfig();
             // Setup UI
             this.setupUI();
             
@@ -122,42 +146,39 @@ class TaskpaneApp {
         
         // Load settings into UI
         this.loadSettingsIntoUI();
-
         // Model selection UI elements
         this.modelServiceSelect = document.getElementById('model-service');
-        this.baseUrlInput = document.getElementById('base-url');
-        // Disable autocomplete for base-url input
-        if (this.baseUrlInput) {
-            this.baseUrlInput.setAttribute('autocomplete', 'off');
-        }
         this.modelSelectGroup = document.getElementById('model-select-group');
         this.modelSelect = document.getElementById('model-select');
-
+        // Populate model service dropdown from defaultProvidersConfig
+        if (this.modelServiceSelect && this.defaultProvidersConfig) {
+            this.modelServiceSelect.innerHTML = Object.entries(this.defaultProvidersConfig)
+                .filter(([key, val]) => key !== 'custom')
+                .map(([key, val]) => `<option value="${key}">${val.label}</option>`)
+                .join('');
+        }
         // Hide AI config placeholder in main UI by default
         const aiConfigPlaceholder = document.getElementById('ai-config-placeholder');
         if (aiConfigPlaceholder) {
             aiConfigPlaceholder.classList.add('hidden');
             aiConfigPlaceholder.innerHTML = '';
         }
-
-        // Wire up model discovery and OpenAI model select visibility
-        const openaiModelGroup = document.getElementById('openai-model-group');
-        const openaiModelSelect = document.getElementById('openai-model-select');
-        if (this.modelServiceSelect && this.baseUrlInput && this.modelSelectGroup && this.modelSelect) {
+        if (this.modelServiceSelect && this.modelSelectGroup && this.modelSelect) {
             this.modelServiceSelect.addEventListener('change', () => {
-                this.updateModelDropdown();
-                // Show OpenAI model select only if OpenAI is selected
-                if (openaiModelGroup) {
-                    openaiModelGroup.style.display = this.modelServiceSelect.value === 'openai' ? '' : 'none';
+                // Print resultant baseUrl to console for developer/support
+                const providerKey = this.modelServiceSelect.value;
+                if (this.defaultProvidersConfig && this.defaultProvidersConfig[providerKey]) {
+                    const baseUrl = this.defaultProvidersConfig[providerKey].baseUrl || '';
+                    console.log(`[Provider Base URL] ${providerKey}: ${baseUrl}`);
                 }
+                this.updateModelDropdown();
             });
-            this.baseUrlInput.addEventListener('change', () => this.updateModelDropdown());
-            this.baseUrlInput.addEventListener('blur', () => this.updateModelDropdown());
-            this.updateModelDropdown();
-            // Set initial OpenAI model group visibility
-            if (openaiModelGroup) {
-                openaiModelGroup.style.display = this.modelServiceSelect.value === 'openai' ? '' : 'none';
+            // Set initial baseUrl to console
+            if (this.modelServiceSelect.value && this.defaultProvidersConfig && this.defaultProvidersConfig[this.modelServiceSelect.value]) {
+                const baseUrl = this.defaultProvidersConfig[this.modelServiceSelect.value].baseUrl || '';
+                console.log(`[Provider Base URL] ${this.modelServiceSelect.value}: ${baseUrl}`);
             }
+            this.updateModelDropdown();
         }
     }
 
@@ -166,26 +187,13 @@ class TaskpaneApp {
         document.getElementById('analyze-email').addEventListener('click', () => this.analyzeEmail());
         document.getElementById('generate-response').addEventListener('click', () => this.generateResponse());
         document.getElementById('refine-response').addEventListener('click', () => this.refineResponse());
-        
+
         // Classification warning buttons
         document.getElementById('proceed-anyway').addEventListener('click', () => this.proceedWithWarning());
         document.getElementById('cancel-analysis').addEventListener('click', () => this.cancelAnalysis());
-        
+
         // Response actions
         document.getElementById('copy-response').addEventListener('click', () => this.copyResponse());
-        // Detect environment and set default model service using S3 bucket prefix in URL (startsWith)
-        try {
-            const url = window.location.href;
-            if (url.startsWith('https://293354421824-')) {
-                document.getElementById('model-service').value = 'ollama';
-                console.log('[Env Detect] Home mode detected (URL starts with "https://293354421824-")');
-            } else {
-                document.getElementById('model-service').value = 'openai';
-                console.log('[Env Detect] Work mode detected (URL does not start with "https://293354421824-")');
-            }
-        } catch (e) {
-            console.log('[Env Detect] Error detecting environment from URL:', e);
-        }
         document.getElementById('insert-response').addEventListener('click', () => this.insertResponse());
         
         // Settings
@@ -433,20 +441,14 @@ class TaskpaneApp {
 
     getAIConfiguration() {
         let model = this.getSelectedModel();
-        // If OpenAI is selected, use the OpenAI model select value
-        if (this.modelServiceSelect && this.modelServiceSelect.value === 'openai') {
-            const openaiModelSelect = document.getElementById('openai-model-select');
-            if (openaiModelSelect && openaiModelSelect.value) {
-                model = openaiModelSelect.value;
-            }
-        } else if (this.modelServiceSelect && this.modelServiceSelect.value === 'ollama' && this.modelSelect && this.modelSelect.value) {
+        // Always use the unified modelSelect for model selection
+        if (this.modelSelect && this.modelSelect.value) {
             model = this.modelSelect.value;
         }
         return {
             service: this.modelServiceSelect ? this.modelServiceSelect.value : '',
             apiKey: document.getElementById('api-key').value,
             endpointUrl: document.getElementById('endpoint-url').value,
-            baseUrl: this.baseUrlInput ? this.baseUrlInput.value : '',
             model
         };
     }
@@ -473,53 +475,39 @@ class TaskpaneApp {
     }
 
     async updateModelDropdown() {
-        if (!this.modelServiceSelect || !this.baseUrlInput || !this.modelSelectGroup || !this.modelSelect) return;
+        if (!this.modelServiceSelect || !this.modelSelectGroup || !this.modelSelect) return;
+        // Load default models config (cache for session)
+        if (!this.defaultModelsConfig) {
+            this.defaultModelsConfig = await this.fetchDefaultModelsConfig();
+        }
         const aiConfigPlaceholder = document.getElementById('ai-config-placeholder');
-        const openaiModelGroup = document.getElementById('openai-model-group');
-        const openaiModelSelect = document.getElementById('openai-model-select');
+        this.modelSelectGroup.style.display = 'none';
+        this.modelSelect.innerHTML = '';
+        let models = [];
+        let preferred = '';
+        let errorMsg = '';
         if (this.modelServiceSelect.value === 'ollama') {
             this.modelSelectGroup.style.display = '';
             this.modelSelect.innerHTML = '<option value="">Loading...</option>';
             const baseUrl = this.baseUrlInput.value || 'http://localhost:11434';
-            const requestUrl = `${baseUrl.replace(/\/$/, '')}/api/tags`;
-            console.log('[Ollama Model Discovery] Requesting:', requestUrl);
-            let models = [];
             try {
                 models = await AIService.fetchOllamaModels(baseUrl);
-                console.log('[Ollama Model Discovery] Models received:', models);
                 this.modelSelect.innerHTML = models.length
                     ? models.map(m => `<option value="${m}">${m}</option>`).join('')
                     : '<option value="">No models found</option>';
-                // Remove any previous error message
-                const errorDiv = document.getElementById('ollama-model-error');
-                if (errorDiv) errorDiv.remove();
-                // Hide AI config placeholder in main UI if model discovery succeeds
-                if (aiConfigPlaceholder) {
-                    aiConfigPlaceholder.classList.add('hidden');
-                    aiConfigPlaceholder.innerHTML = '';
+                preferred = this.defaultModelsConfig && this.defaultModelsConfig.ollama;
+                if (preferred && models.includes(preferred)) {
+                    this.modelSelect.value = preferred;
+                } else if (models.length) {
+                    this.modelSelect.value = models[0];
                 }
             } catch (err) {
-                console.error('[Ollama Model Discovery] Error:', err);
+                errorMsg = `Error fetching models: ${err.message || err}`;
                 this.modelSelect.innerHTML = '<option value="">Error fetching models</option>';
-                // Show error in UI
-                let errorDiv = document.getElementById('ollama-model-error');
-                if (!errorDiv) {
-                    errorDiv = document.createElement('div');
-                    errorDiv.id = 'ollama-model-error';
-                    errorDiv.style.color = 'red';
-                    this.modelSelectGroup.appendChild(errorDiv);
-                }
-                errorDiv.textContent = `Error fetching models: ${err.message || err}`;
-                // Show AI config placeholder in main UI if model discovery fails
-                if (aiConfigPlaceholder) {
-                    aiConfigPlaceholder.innerHTML = `<div class='ai-config-error'>Model discovery failed. Please check your AI configuration in Settings.</div>`;
-                    aiConfigPlaceholder.classList.remove('hidden');
-                }
             }
-        } else if (this.modelServiceSelect.value === 'openai' && openaiModelGroup && openaiModelSelect) {
-            // Try to fetch models from OpenAI-compatible endpoint
-            openaiModelGroup.style.display = '';
-            openaiModelSelect.innerHTML = '<option value="">Loading...</option>';
+        } else if (this.modelServiceSelect.value === 'openai') {
+            this.modelSelectGroup.style.display = '';
+            this.modelSelect.innerHTML = '<option value="">Loading...</option>';
             let endpoint = this.baseUrlInput && this.baseUrlInput.value ? this.baseUrlInput.value : 'https://api.openai.com/v1';
             if (endpoint.endsWith('/')) endpoint = endpoint.slice(0, -1);
             const apiKey = document.getElementById('api-key').value;
@@ -531,34 +519,42 @@ class TaskpaneApp {
                 });
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const data = await response.json();
-                const models = (data.data || []).map(m => m.id).filter(id => id.startsWith('gpt-') || id.startsWith('ft-') || id.startsWith('davinci') || id.startsWith('babbage') || id.startsWith('curie'));
-                if (models.length) {
-                    openaiModelSelect.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
-                } else {
-                    openaiModelSelect.innerHTML = '<option value="">No models found</option>';
-                }
+                models = (data.data || []).map(m => m.id).filter(id => id.startsWith('gpt-') || id.startsWith('ft-') || id.startsWith('davinci') || id.startsWith('babbage') || id.startsWith('curie'));
+                this.modelSelect.innerHTML = models.length
+                    ? models.map(m => `<option value="${m}">${m}</option>`).join('')
+                    : '<option value="">No models found</option>';
             } catch (err) {
-                console.error('[OpenAI Model Discovery] Error:', err);
-                // Fallback to static list
-                openaiModelSelect.innerHTML = [
-                    '<option value="gpt-4">gpt-4</option>',
-                    '<option value="gpt-4o">gpt-4o</option>',
-                    '<option value="gpt-3.5-turbo">gpt-3.5-turbo</option>',
-                    '<option value="gpt-3.5-turbo-16k">gpt-3.5-turbo-16k</option>'
-                ].join('');
+                errorMsg = `Error fetching models: ${err.message || err}`;
+                models = ['gpt-4', 'gpt-4o', 'gpt-3.5-turbo', 'gpt-3.5-turbo-16k'];
+                this.modelSelect.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
+            }
+            preferred = this.defaultModelsConfig && this.defaultModelsConfig.openai;
+            if (preferred && models.includes(preferred)) {
+                this.modelSelect.value = preferred;
+            } else if (models.length) {
+                this.modelSelect.value = models[0];
             }
         } else {
+            // Hide model dropdown for services that don't support model selection
             this.modelSelectGroup.style.display = 'none';
-            this.modelSelect.innerHTML = '';
-            const errorDiv = document.getElementById('ollama-model-error');
-            if (errorDiv) errorDiv.remove();
-            // Hide AI config placeholder in main UI for non-Ollama
-            if (aiConfigPlaceholder) {
-                aiConfigPlaceholder.classList.add('hidden');
-                aiConfigPlaceholder.innerHTML = '';
+        }
+        // Show error if needed
+        let errorDiv = document.getElementById('model-select-error');
+        if (errorMsg) {
+            if (!errorDiv) {
+                errorDiv = document.createElement('div');
+                errorDiv.id = 'model-select-error';
+                errorDiv.style.color = 'red';
+                this.modelSelectGroup.appendChild(errorDiv);
             }
-            // Hide OpenAI model group for non-OpenAI
-            if (openaiModelGroup) openaiModelGroup.style.display = 'none';
+            errorDiv.textContent = errorMsg;
+        } else if (errorDiv) {
+            errorDiv.remove();
+        }
+        // Hide AI config placeholder in main UI if model discovery succeeds
+        if (aiConfigPlaceholder) {
+            aiConfigPlaceholder.classList.add('hidden');
+            aiConfigPlaceholder.innerHTML = '';
         }
     }
 

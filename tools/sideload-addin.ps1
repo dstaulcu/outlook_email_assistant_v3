@@ -6,27 +6,50 @@
 param(
     [Parameter(Mandatory=$false)]
     [string]$ManifestUrl = "",
-    
+
     [Parameter(Mandatory=$false)]
-    [string]$LocalManifestPath = ".\manifest.xml",
-    
+    [string]$LocalManifestPath = (Join-Path $PSScriptRoot '..\manifest.xml'),
+
     [Parameter(Mandatory=$false)]
-    [switch]$RemoveAddin = $false,
-    
+    [ValidateSet('Dev', 'Prd')]
+    [string]$Environment = $null,
+
     [Parameter(Mandatory=$false)]
-    [switch]$ClearCacheOnly = $false,
-    
+    [ValidateSet('Add','Remove','ClearCache')]
+    [string]$Action = 'Add',
+
+    [Parameter(Mandatory=$false)]
+    [switch]$RemoveAddin = $false, # Deprecated
+
+    [Parameter(Mandatory=$false)]
+    [switch]$ClearCacheOnly = $false, # Deprecated
+
     [Parameter(Mandatory=$false)]
     [switch]$Force = $false,
-    
+
     [Parameter(Mandatory=$false)]
     [switch]$Verbose = $false
 )
 
+
 # Configuration
 $AddinId = "12345678-1234-1234-1234-123456789012"  # Must match manifest ID
 $AddinName = "PromptEmail"
+$ConfigPath = Join-Path $PSScriptRoot 'deployment-environments.json'
 $DefaultManifestUrl = "https://your-promptemail-bucket-name.s3.amazonaws.com/manifest.xml"
+
+# Load environment config if needed
+if ($Environment) {
+    if (Test-Path $ConfigPath) {
+        $config = Get-Content $ConfigPath -Raw | ConvertFrom-Json
+        if ($config.environments.$Environment.publicBaseUrl) {
+            $DefaultManifestUrl = $config.environments.$Environment.publicBaseUrl.TrimEnd('/') + '/manifest.xml'
+        }
+        # Optionally, you can also use $config.environments.$Environment.s3BucketUri and $config.environments.$Environment.region elsewhere as needed
+    } else {
+        Write-Host "Warning: deployment-environments.json not found. Using hardcoded manifest URL." -ForegroundColor Yellow
+    }
+}
 
 # Colors for output
 $Red = "Red"
@@ -330,83 +353,104 @@ function Main {
         exit 1
     }
     
-    # Handle cache clear only
-    if ($ClearCacheOnly) {
-        Stop-OutlookProcesses
-        Clear-OutlookCache
-        Write-Status "`n✓ Cache clearing completed!" $Green
-        return
+    # Deprecation warnings for old switches
+    if ($PSBoundParameters.ContainsKey('RemoveAddin')) {
+        Write-Status "⚠ -RemoveAddin is deprecated. Use -Action Remove instead." $Yellow
+        if ($RemoveAddin) { $Action = 'Remove' }
+    }
+    if ($PSBoundParameters.ContainsKey('ClearCacheOnly')) {
+        Write-Status "⚠ -ClearCacheOnly is deprecated. Use -Action ClearCache instead." $Yellow
+        if ($ClearCacheOnly) { $Action = 'ClearCache' }
+    }
+
+    # Handle actions
+    switch ($Action) {
+        'ClearCache' {
+            Stop-OutlookProcesses
+            Clear-OutlookCache
+            Write-Status "`n✓ Cache clearing completed!" $Green
+            return
+        }
+        'Remove' {
+            Stop-OutlookProcesses
+            Remove-AddinFromRegistry
+            Clear-OutlookCache
+            Write-Status "`n✓ PromptEmail add-in removed successfully!" $Green
+            Start-OutlookSafely
+            return
+        }
+        'Add' {
+            # ...existing code for add-in install...
+        }
+        default {
+            Write-Status "✗ Unknown action: $Action" $Red
+            exit 1
+        }
     }
     
-    # Handle removal
-    if ($RemoveAddin) {
+        # Only for 'Add' action
+        # Determine manifest location
+        $manifestLocation = ""
+        if ($ManifestUrl -ne "") {
+            $manifestLocation = $ManifestUrl
+        }
+        elseif ($Environment -and $DefaultManifestUrl) {
+            $manifestLocation = $DefaultManifestUrl
+        }
+        elseif (Test-Path $LocalManifestPath) {
+            $manifestLocation = (Resolve-Path $LocalManifestPath).Path
+        }
+        else {
+            $manifestLocation = $DefaultManifestUrl
+        }
+
+        Write-Status "Using manifest: $manifestLocation" $Cyan
+
+        # Test manifest accessibility
+        if (-not (Test-ManifestAccessibility -ManifestLocation $manifestLocation)) {
+            if (-not $Force) {
+                Write-Status "✗ Cannot access manifest. Use -Force to proceed anyway." $Red
+                exit 1
+            }
+            else {
+                Write-Status "⚠ Proceeding despite inaccessible manifest (Force mode)" $Yellow
+            }
+        }
+
+        # Validate manifest
+        if (-not (Validate-Manifest -ManifestLocation $manifestLocation)) {
+            if (-not $Force) {
+                Write-Status "✗ Manifest validation failed. Use -Force to proceed anyway." $Red
+                exit 1
+            }
+            else {
+                Write-Status "⚠ Proceeding despite validation failure (Force mode)" $Yellow
+            }
+        }
+
+        # Stop Outlook
         Stop-OutlookProcesses
+
+        # Remove existing registration
         Remove-AddinFromRegistry
+
+        # Clear cache
         Clear-OutlookCache
-        Write-Status "`n✓ PromptEmail add-in removed successfully!" $Green
-        Start-OutlookSafely
-        return
-    }
-    
-    # Determine manifest location
-    $manifestLocation = ""
-    if ($ManifestUrl -ne "") {
-        $manifestLocation = $ManifestUrl
-    }
-    elseif (Test-Path $LocalManifestPath) {
-        $manifestLocation = (Resolve-Path $LocalManifestPath).Path
-    }
-    else {
-        $manifestLocation = $DefaultManifestUrl
-    }
-    
-    Write-Status "Using manifest: $manifestLocation" $Cyan
-    
-    # Test manifest accessibility
-    if (-not (Test-ManifestAccessibility -ManifestLocation $manifestLocation)) {
-        if (-not $Force) {
-            Write-Status "✗ Cannot access manifest. Use -Force to proceed anyway." $Red
-            exit 1
+
+        # Add new registration
+        if (Add-AddinToRegistry -ManifestLocation $manifestLocation) {
+            Write-Status "`n✓ PromptEmail add-in sideloaded successfully!" $Green
+
+            # Start Outlook
+            Start-OutlookSafely
+
+            # Show instructions
+            Show-Instructions
         }
         else {
-            Write-Status "⚠ Proceeding despite inaccessible manifest (Force mode)" $Yellow
-        }
-    }
-    
-    # Validate manifest
-    if (-not (Validate-Manifest -ManifestLocation $manifestLocation)) {
-        if (-not $Force) {
-            Write-Status "✗ Manifest validation failed. Use -Force to proceed anyway." $Red
+            Write-Status "`n✗ Failed to sideload add-in" $Red
             exit 1
         }
-        else {
-            Write-Status "⚠ Proceeding despite validation failure (Force mode)" $Yellow
-        }
-    }
-    
-    # Stop Outlook
-    Stop-OutlookProcesses
-    
-    # Remove existing registration
-    Remove-AddinFromRegistry
-    
-    # Clear cache
-    Clear-OutlookCache
-    
-    # Add new registration
-    if (Add-AddinToRegistry -ManifestLocation $manifestLocation) {
-        Write-Status "`n✓ PromptEmail add-in sideloaded successfully!" $Green
-        
-        # Start Outlook
-        Start-OutlookSafely
-        
-        # Show instructions
-        Show-Instructions
-    }
-    else {
-        Write-Status "`n✗ Failed to sideload add-in" $Red
-        exit 1
-    }
 }
 
 # Help function
@@ -418,27 +462,34 @@ USAGE:
     .\sideload-addin.ps1 [OPTIONS]
 
 OPTIONS:
-    -ManifestUrl <url>       URL to manifest.xml on S3 or web server
-    -LocalManifestPath <path> Path to local manifest.xml file (default: .\manifest.xml)
-    -RemoveAddin            Remove the add-in instead of installing
-    -ClearCacheOnly         Only clear Outlook cache, don't install
-    -Force                  Proceed even if manifest is inaccessible or invalid
-    -Verbose                Show detailed output
-    -Help                   Show this help message
+    -Environment <Dev|Prd>        Use the manifest URL for the specified environment (from deployment-environments.json)
+    -ManifestUrl <url>            URL to manifest.xml on S3 or web server (overrides -Environment)
+    -LocalManifestPath <path>     Path to local manifest.xml file (default: ..\manifest.xml)
+    -RemoveAddin                  Remove the add-in instead of installing
+    -ClearCacheOnly               Only clear Outlook cache, don't install
+    -Force                        Proceed even if manifest is inaccessible or invalid
+    -Verbose                      Show detailed output
+    -Help                         Show this help message
 
 EXAMPLES:
-    # Install from S3 URL
+    # Install from Dev S3 URL (from config)
+    .\sideload-addin.ps1 -Environment Dev
+
+    # Install from Prd S3 URL (from config)
+    .\sideload-addin.ps1 -Environment Prd
+
+    # Install from explicit S3 URL
     .\sideload-addin.ps1 -ManifestUrl "https://mybucket.s3.amazonaws.com/manifest.xml"
-    
+
     # Install from local file
     .\sideload-addin.ps1 -LocalManifestPath "C:\MyProject\manifest.xml"
-    
+
     # Remove the add-in
     .\sideload-addin.ps1 -RemoveAddin
-    
+
     # Clear cache only
     .\sideload-addin.ps1 -ClearCacheOnly
-    
+
     # Force install even if validation fails
     .\sideload-addin.ps1 -Force
 
@@ -449,6 +500,7 @@ REQUIREMENTS:
     • Network access to manifest location
 
 NOTE: This script requires Administrator privileges to modify the Windows registry.
+      If using -Environment, ensure deployment-environments.json is present in the tools/ directory.
 "@ -ForegroundColor Cyan
 }
 

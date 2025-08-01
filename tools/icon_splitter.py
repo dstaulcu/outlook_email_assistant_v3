@@ -1,7 +1,7 @@
 from PIL import Image
 
 # Load the base image
-img = Image.open("ai_brain_base.png").convert("RGBA")
+img = Image.open("../src/assets/source/ai_brain_base.png").convert("RGBA")
 
 # Desired icon sizes
 sizes = [16, 32, 80, 128]
