@@ -31,16 +31,21 @@ function Update-ManifestUrls {
 
 
 
-# Load S3 base URL from deployment-environments.json
+# Load environment config and construct URLs dynamically
 $ConfigPath = Join-Path $PSScriptRoot 'deployment-environments.json'
 if (Test-Path $ConfigPath) {
     $config = Get-Content $ConfigPath -Raw | ConvertFrom-Json
-    if ($config.environments.$Environment.publicBaseUrl -and $config.environments.$Environment.s3BucketUri -and $config.environments.$Environment.region) {
-        $PublicBaseUrl = $config.environments.$Environment.publicBaseUrl
-        $S3BucketUri = $config.environments.$Environment.s3BucketUri.Trim()
-        $Region = $config.environments.$Environment.region
+    $envConfig = $config.environments.$Environment
+    if ($envConfig.bucketName -and $envConfig.region -and $envConfig.publicDnsSuffix -and $envConfig.s3DnsSuffix) {
+        $BucketName = $envConfig.bucketName
+        $Region = $envConfig.region
+        $PublicDnsSuffix = $envConfig.publicDnsSuffix
+        $S3DnsSuffix = $envConfig.s3DnsSuffix
+        $PublicBaseUrl = "https://$BucketName.$PublicDnsSuffix"
+        $S3BucketUri = "s3://$BucketName"
+        $S3RestUrl = "https://$BucketName.$S3DnsSuffix"
     } else {
-        throw "Missing publicBaseUrl, s3BucketUri, or region for environment '$Environment' in deployment-environments.json."
+        throw "Missing bucketName, region, publicDnsSuffix, or s3DnsSuffix for environment '$Environment' in deployment-environments.json."
     }
 } else {
     throw "deployment-environments.json not found in tools/."
@@ -49,6 +54,7 @@ if (Test-Path $ConfigPath) {
 # For compatibility with rest of script
 $HttpBaseUrl = $PublicBaseUrl
 $S3BaseUrl = $S3BucketUri
+
 $BucketName = ($S3BucketUri -replace '^s3://', '')
 
 # Update references in online.orig and copy to online
@@ -416,3 +422,4 @@ Verify-Deployment
 Show-NextSteps
 
 Write-Status "`nDeployment completed!" $Green
+
