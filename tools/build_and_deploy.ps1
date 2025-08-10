@@ -1,89 +1,122 @@
 param(
+    [Parameter(Mandatory = $true)]
     [ValidateSet('Dev', 'Prd')]
-    [string]$Environment = 'Dev',
-    [switch]$DryRun = $false
+    [string]$Environment,
+    [switch]$DryRun,
+    [switch]$Force
 )
 
-# Ensure $ProjectRoot is set before any usage
-$ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
+function Update-EmbeddedUrls {
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param (
+        [Parameter(Mandatory)]
+        [string]$RootPath,
+        [string]$NewHost,
+        [string]$NewScheme = "https"
+    )
+    # (Removed stray $updatedContent normalization from here)
+    $files = Get-ChildItem -Path $RootPath -Recurse -File
+    $urlResults = @()
+    foreach ($file in $files) {
+        try {
+            $content = Get-Content -Path $file.FullName -Raw -ErrorAction Stop
+            $matches = [regex]::Matches($content, $urlPattern)
 
-# Update manifest.xml URLs for the selected environment
-function Update-ManifestUrls {
-    $srcManifestPath = Join-Path $ProjectRoot 'src/manifest.xml'
-    $publicManifestPath = Join-Path $ProjectRoot 'public/manifest.xml'
-    if (-not (Test-Path $srcManifestPath)) {
-        Write-Status "src/manifest.xml not found, skipping URL update." $Yellow
-        return
+            foreach ($match in $matches) {
+                $urlResults += [PSCustomObject]@{
+                    File = $file.FullName
+                    URL  = $match.Value
+                }
+            }
+        }
+        catch {
+            Write-Warning "Could not read file: $($file.FullName)"
+        }
     }
-    # Copy manifest.xml to public before updating URLs
-    Copy-Item $srcManifestPath $publicManifestPath -Force
-    $manifestContent = Get-Content $publicManifestPath -Raw
-    # Replace all S3 URLs (including s3-website endpoints) with the correct base for this environment
-    $pattern = 'https?://[a-zA-Z0-9\-]+\.(s3|s3-website)([.-][a-z0-9-]+)?\.amazonaws\.com'
-    $updatedContent = $manifestContent -replace $pattern, $HttpBaseUrl
-    if ($manifestContent -ne $updatedContent) {
-        Set-Content $publicManifestPath $updatedContent
-        Write-Status "Updated manifest.xml URLs for $Environment environment." $Green
-    } else {
-        Write-Status "No manifest.xml URLs needed updating for $Environment environment." $Blue
+
+    # evaluate each url
+    foreach ($url in $urlResults) {
+
+        # Check if any name is contained in the URL
+        $fileNames = $files | Select-Object -ExpandProperty name
+        $otherStrings = "(outlook-email-assistant)"
+        $matchFound = $fileNames | Where-Object { $url.URL -like "*$_*" }
+
+        # prepare url for POTENTIAL replacement
+        $do_replacement = $false
+        if ($url.URL -like "s3://*") {
+            $originalUri = [System.Uri]("https://" + $url.URL.Substring(6))
+            $scheme = "s3"
+        }
+        else {
+            $originalUri = [System.Uri]$url.URL
+            $scheme = $originalUri.Scheme
+        }        
+
+        if ($matchFound) {
+            $do_replacement = $true
+            Write-Host "✓ Public file match found: $($matchFound -join ', ') for url: $($url.URL) in file: $($url.File)"
+            # we need to get the fullpath to file from matching filename
+            $matchFoundFullName = ($files | Where-Object { $_.name -eq $matchFound }[0]).FullName
+            # Normalize path for reference in URL
+            $AbsolutePath_new = $matchFoundFullName -replace ".*\\public", ""
+            $AbsolutePath_new = $AbsolutePath_new -replace "\\", "/"
+            $AbsolutePath_new = $AbsolutePath_new -replace "^([^/])", "/$1"
+        }
+        elseif ($url.URL -match $otherStrings) {
+            $do_replacement = $true
+            Write-Host "✓ String match found for url: $($url.URL) in file: $($url.File)"
+            $AbsolutePath_new = $originalUri.AbsolutePath
+        }
+        # Normalize double slashes (except after protocol) for all replacements
+        if ($do_replacement -and $AbsolutePath_new) {
+            $AbsolutePath_new = $AbsolutePath_new -replace '^/+', '/'
+            $AbsolutePath_new = $AbsolutePath_new -replace '://', '___PROTOCOL_SLASH___'
+            $AbsolutePath_new = $AbsolutePath_new -replace '/{2,}', '/'
+            $AbsolutePath_new = $AbsolutePath_new -replace '___PROTOCOL_SLASH___', '://'
+        }
+        else {
+            $do_replacement = $false
+            Write-Host "⚠️  No public file name or match found for url: $($url.URL) in file: $($url.File)"
+        }
+
+        if ($do_replacement -eq $true) {
+            # Build new URI
+            $builder = New-Object System.UriBuilder $originalUri
+            $builder.Host = $NewHost
+            $builder.Path = $AbsolutePath_new
+            $builder.Query = $originalUri.Query
+            $newUri = $builder.Uri            
+
+
+            # Restore s3:// scheme if needed
+            $newUriString = $newUri.AbsoluteUri
+            if ($scheme -eq "s3") {
+                $newUriString = $newUriString -replace "^https://", "s3://"
+            }
+
+            # Normalize double slashes in the final URL (except after protocol)
+            $newUriString = $newUriString -replace '://', '___PROTOCOL_SLASH___'
+            $newUriString = $newUriString -replace '/{2,}', '/'
+            $newUriString = $newUriString -replace '___PROTOCOL_SLASH___', '://'
+
+            Write-Host "`tReplacing originalUri: `\"$($url.URL)`\" with:"
+            write-host "`t               newUri: `\"$($newUriString)`\""
+
+            if ($PSCmdlet.ShouldProcess($url.File, "Replace '$($url.URL)' with '$newUriString'")) {
+                $content = Get-Content -Path $url.File -Raw
+                $contentUpdated = $content -replace [regex]::Escape($url.URL), $newUriString
+                Set-Content -Path $url.File -Value $contentUpdated
+            }
+
+        }
+
     }
+
 }
 
-
-
-# Load environment config and construct URLs dynamically
-$ConfigPath = Join-Path $PSScriptRoot 'deployment-environments.json'
-if (Test-Path $ConfigPath) {
-    $config = Get-Content $ConfigPath -Raw | ConvertFrom-Json
-    $envConfig = $config.environments.$Environment
-    if ($envConfig.bucketName -and $envConfig.region -and $envConfig.publicDnsSuffix -and $envConfig.s3DnsSuffix) {
-        $BucketName = $envConfig.bucketName
-        $Region = $envConfig.region
-        $PublicDnsSuffix = $envConfig.publicDnsSuffix
-        $S3DnsSuffix = $envConfig.s3DnsSuffix
-        $PublicBaseUrl = "https://$BucketName.$PublicDnsSuffix"
-        $S3BucketUri = "s3://$BucketName"
-        $S3RestUrl = "https://$BucketName.$S3DnsSuffix"
-    } else {
-        throw "Missing bucketName, region, publicDnsSuffix, or s3DnsSuffix for environment '$Environment' in deployment-environments.json."
-    }
-} else {
-    throw "deployment-environments.json not found in tools/."
-}
-
-# For compatibility with rest of script
-$HttpBaseUrl = $PublicBaseUrl
-$S3BaseUrl = $S3BucketUri
-
-$BucketName = ($S3BucketUri -replace '^s3://', '')
 
 # Update references in online.orig and copy to online
-function Update-OnlineReferences {
-    param(
-        [string]$S3BaseUrlOverride = $null
-    )
-    $S3BaseUrlFinal = if ($S3BaseUrlOverride) { $S3BaseUrlOverride } else { "$HttpBaseUrl/online" }
-    $origDir = Join-Path $ProjectRoot 'src/online.orig'
-    $destDir = Join-Path $ProjectRoot 'public/online'
-
-    Write-Status "Copying files from $origDir to $destDir ..." $Blue
-    if (Test-Path $destDir) {
-        Remove-Item $destDir -Recurse -Force
-    }
-    Copy-Item $origDir $destDir -Recurse -Force
-
-    $files = Get-ChildItem -Path $destDir -Recurse -Include *.js,*.html,*.css
-    foreach ($file in $files) {
-        $content = Get-Content $file.FullName -Raw
-        $content = $content -replace '//appsforoffice\.microsoft\.com', "$S3BaseUrlFinal/appsforoffice.microsoft.com"
-        $content = $content -replace '//ajax\.aspnetcdn\.com', "$S3BaseUrlFinal/ajax.aspnetcdn.com"
-        Set-Content $file.FullName $content
-        Write-Status "Updated references in $($file.FullName)" $Green
-    }
-    Write-Status "All references updated in 'public/online'." $Green
-}
-
-
 function Write-Status {
     param([string]$Message, [string]$Color = "White")
     $validColors = @('Black', 'DarkBlue', 'DarkGreen', 'DarkCyan', 'DarkRed', 'DarkMagenta', 'DarkYellow', 'Gray', 'DarkGray', 'Blue', 'Green', 'Cyan', 'Red', 'Magenta', 'Yellow', 'White')
@@ -93,10 +126,166 @@ function Write-Status {
     Write-Host $Message -ForegroundColor $Color
 }
 
-Write-Status "Starting build process..." "Blue"
+function Test-Prerequisites {
+    Write-Status "Checking prerequisites..." 'Blue'
+    
+    # Check if AWS CLI is installed
+    try {
+        aws --version | Out-Null
+        Write-Status "✓ AWS CLI found" 'Green'
+    }
+    catch {
+        Write-Status "✗ AWS CLI not found. Please install AWS CLI." 'Red'
+        exit 1
+    }
+        
+    Write-Status "✓ All prerequisites met" 'Green'
+}
 
+function Deploy-Assets {
+    Write-Status "Deploying assets to S3 bucket: $BucketName (region: $Region)" $Blue
+
+    if ($DryRun) {
+        Write-Status "DRY RUN MODE - No files will be uploaded" 
+    } elseif (-not $DryRun) {
+        if ($Force) {
+            $confirm = 'YES'
+        } else {
+            $confirm = Read-Host "Are you sure you want to delete ALL contents from the S3 bucket '$BucketName'? This cannot be undone. Type 'YES' to confirm"
+        }
+        if ($confirm -eq 'YES') {
+            try {
+                Write-Status "Clearing all items from S3 bucket: $BucketName" 'Yellow'
+                aws s3 rm "$S3BaseUrl/" --recursive --region $Region
+                Write-Status "✓ Cleared all items from S3 bucket: $BucketName" 'Green'
+            }
+            catch {
+                Write-Status "✗ Failed to clear S3 bucket: $BucketName" 'Red'
+                Write-Status $_.Exception.Message $Red
+                exit 1
+            }
+        } else {
+            Write-Status "Aborted: S3 bucket will NOT be cleared. Deployment cancelled." 'Red'
+            exit 1
+        }
+    }
+
+    # Upload all files in public
+    $allFiles = Get-ChildItem -Path $BuildDir -Recurse -File
+
+    foreach ($file in $allFiles) {
+        # Compute S3 key relative to $BuildDir
+        $s3Key = $file.FullName.Substring($BuildDir.Length + 1) -replace '\\', '/'
+        $localPath = $file.FullName
+
+        # Determine content-type by extension
+        $ext = [System.IO.Path]::GetExtension($file.Name).ToLower()
+        switch ($ext) {
+            ".html" { $contentType = "text/html" }
+            ".js" { $contentType = "application/javascript" }
+            ".json" { $contentType = "application/json" }
+            ".xml" { $contentType = "text/xml" }
+            ".css" { $contentType = "text/css" }
+            ".png" { $contentType = "image/png" }
+            default { $contentType = $null }
+        }
+
+        if ($DryRun) {
+            Write-Status "Would upload: $localPath -> $S3BaseUrl/$s3Key ($contentType)" 'Yellow'
+        }
+        else {
+            try {
+                # Compose aws s3 cp command
+                if ($contentType) {
+                    aws s3 cp $localPath "$S3BaseUrl/$s3Key" --region $Region --content-type $contentType
+                }
+                else {
+                    aws s3 cp $localPath "$S3BaseUrl/$s3Key" --region $Region
+                }
+                Write-Status "✓ Uploaded $s3Key" 'Green'
+            }
+            catch {
+                Write-Status "✗ Failed to upload $s3Key" 'Red'
+                Write-Status $_.Exception.Message 'Red'
+            }
+        }
+    }
+}
+
+function Test-Deployment {
+
+    Write-Status "Verifying deployment..." 'Blue'
+    $baseUrl = $HttpBaseUrl
+    # Test index.html accessibility
+    try {
+        $response = Invoke-WebRequest -Uri "$baseUrl/index.html" -Method Head -TimeoutSec 10
+        if ($response.StatusCode -eq 200) {
+            Write-Status "✓ index.html is accessible" 'Green'
+        }
+        else {
+            Write-Status "✗ index.html returned status: $($response.StatusCode)" 'Red'
+        }
+    }
+    catch {
+        Write-Status "✗ Failed to verify index.html accessibility" 'Red'
+        Write-Status $_.Exception.Message 'Red'
+    }
+}
+
+function Show-NextSteps {
+    Write-Status "`nDeployment Summary:" 'Blue'
+    Write-Status "Environment: $Environment" 'Blue'
+    Write-Status "Bucket: $BucketName" 'Blue'
+    Write-Status "Region: $Region" 'Blue'
+    Write-Status "Base URL: $HttpBaseUrl" 'Blue'
+    Write-Status "`nNext Steps:" 'Blue'
+    Write-Status "1. Validate the manifest: npm run validate-manifest" 
+    Write-Status "2. Sideload the manifest in Outlook" 
+    Write-Status "3. Test the add-in functionality" 
+}
+
+# Main execution
+Write-Status "PromptEmail Outlook Add-in Deployment" 'Blue'
+Write-Status "=====================================" 'Blue'
+
+# Ensure $ProjectRoot is set before any usage
+$ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
+$srcDir = Join-Path $ProjectRoot 'src'
+$publicDir = Join-Path $ProjectRoot 'public'
+
+# Initialize environment and config 
+$ConfigPath = Join-Path $PSScriptRoot 'deployment-environments.json'
+if (Test-Path $ConfigPath) {
+    $config = Get-Content $ConfigPath -Raw | ConvertFrom-Json
+    $envConfig = $config.environments.$Environment
+    if ($envConfig.publicUri -and $envConfig.s3Uri -and $envConfig.region) {
+        $Region = $envConfig.region
+        $PublicBaseUrl = "$($envConfig.publicUri.protocol)://$($envConfig.publicUri.host)"
+        $S3BaseUrl = "$($envConfig.s3Uri.protocol)://$($envConfig.s3Uri.host)"
+        # For compatibility with rest of script
+        $HttpBaseUrl = $PublicBaseUrl
+        $BucketName = $envConfig.s3Uri.host.Split('.')[0]
+    }
+    else {
+        throw "Missing publicUri, s3Uri, or region for environment '$Environment' in deployment-environments.json."
+    }
+}
+else {
+    throw "deployment-environments.json not found in tools/."
+}
+
+
+# Run prerequisites check as early as possible
+Test-Prerequisites
+
+# clear the public folder if it already exists
+if (test-path -path $publicDir) {
+    remove-item -Path $publicDir -recurse
+    mkdir -Path $publicDir | Out-Null
+}
 
 # Run npm build and capture output
+Write-Status "Starting build process..." "Blue"
 $buildOutput = $null
 $buildError = $null
 $buildSucceeded = $false
@@ -118,308 +307,70 @@ catch {
     exit 1
 }
 
-
-# Ensure styles.css is copied to public before deployment
-$srcStyles = Join-Path $ProjectRoot 'src/assets/css/styles.css'
-$destStyles = Join-Path $ProjectRoot 'public/styles.css'
-if (Test-Path $srcStyles) {
-    Copy-Item $srcStyles $destStyles -Force
-    Write-Status "✓ Copied styles.css to public/" $Green
-} else {
-    Write-Status "✗ src/assets/css/styles.css not found!" $Red
-    exit 1
+# copy src\manifest.xml to .\public
+$srcManifest = Join-Path $srcDir 'manifest.xml'
+$publicManifest = Join-Path $publicDir 'manifest.xml'
+if ($DryRun) {
+    Write-Status "[DryRun] Would copy manifest.xml to public/" 'Yellow'
+}
+elseif (Test-Path $srcManifest) {
+    Copy-Item $srcManifest $publicManifest -Force
+    Write-Status "✓ Copied manifest.xml to public/" 'Green'
+}
+else {
+    Write-Status "✗ src/manifest.xml not found!" 'Red'
 }
 
-# Ensure default-models.json is copied to public before deployment
-$srcDefaultModels = Join-Path $ProjectRoot 'src/default-models.json'
-$destDefaultModels = Join-Path $ProjectRoot 'public/default-models.json'
-if (Test-Path $srcDefaultModels) {
-    Copy-Item $srcDefaultModels $destDefaultModels -Force
-    Write-Status "✓ Copied default-models.json to public/" $Green
-} else {
-    Write-Status "✗ src/default-models.json not found!" $Red
-    exit 1
+# copy src\online to .\public\online
+$srcOnline = Join-Path $srcDir 'online'
+$publicOnline = Join-Path $publicDir 'online'
+if ($DryRun) {
+    Write-Status "[DryRun] Would copy online.orig to public/online/" 'Yellow'
+}
+elseif (Test-Path $srcOnline) {
+    if (Test-Path $publicOnline) {
+        Remove-Item $publicOnline -Recurse -Force
+    }
+    Copy-Item $srcOnline $publicOnline -Recurse -Force
+    Write-Status "✓ Copied online.orig to public/online/" 'Green'
+}
+else {
+    Write-Status "✗ src/online.orig not found!" 'Red'
 }
 
-# Ensure default-providers.json is copied to public before deployment
-$srcDefaultProviders = Join-Path $ProjectRoot 'src/default-providers.json'
-$destDefaultProviders = Join-Path $ProjectRoot 'public/default-providers.json'
-if (Test-Path $srcDefaultProviders) {
-    Copy-Item $srcDefaultProviders $destDefaultProviders -Force
-    Write-Status "✓ Copied default-providers.json to public/" $Green
-} else {
-    Write-Status "✗ src/default-providers.json not found!" $Red
-    exit 1
-}
-
-# Configuration
-$BuildDir = Join-Path $ProjectRoot 'public'
-$ManifestFile = Join-Path $BuildDir 'manifest.xml'
-$RequiredFiles = @(
-    (Join-Path $BuildDir 'index.html'),
-    (Join-Path $BuildDir 'taskpane.html'),
-    (Join-Path $BuildDir 'taskpane.bundle.js'),
-    (Join-Path $BuildDir 'commands.bundle.js'),
-    (Join-Path $BuildDir 'taskpane.css')
-)
-
-# Colors for output
-# Colors are now set in Write-Status, so these variables are not needed
-
-function Test-Prerequisites {
-    Write-Status "Checking prerequisites..." $Blue
-    
-    # Check if AWS CLI is installed
-    try {
-        aws --version | Out-Null
-        Write-Status "✓ AWS CLI found" $Green
-    }
-    catch {
-        Write-Status "✗ AWS CLI not found. Please install AWS CLI." $Red
-        exit 1
-    }
-    
-    # Check if build directory exists
-    if (-not (Test-Path $BuildDir)) {
-        Write-Status "✗ Build directory '$BuildDir' not found. Run 'npm run build' first." $Red
-        exit 1
-    }
-    
-    # Check required files
-    foreach ($file in $RequiredFiles) {
-        if (-not (Test-Path $file)) {
-            Write-Status "✗ Required file not found: $file" $Red
-            exit 1
-        }
-    }
-    
-    Write-Status "✓ All prerequisites met" $Green
-}
-
-function Backup-Manifest {
-    if (Test-Path $ManifestFile) {
-        $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-        $backupFile = "manifest-backup-$timestamp.xml"
-        Copy-Item $ManifestFile $backupFile
-        Write-Status "✓ Manifest backed up to $backupFile" $Green
-    }
-}
-
-function Deploy-Assets {
-    Write-Status "Deploying assets to S3 bucket: $BucketName (region: $Region)" $Blue
-    
-    if ($DryRun) {
-        Write-Status "DRY RUN MODE - No files will be uploaded" $Yellow
-    }
-    
-    # Upload HTML files with correct content-type
-    $htmlFiles = Get-ChildItem -Path $BuildDir -Filter "*.html"
-    foreach ($file in $htmlFiles) {
-        $s3Key = $file.Name
-        $localPath = $file.FullName
-        
-        if ($DryRun) {
-            Write-Status "Would upload: $localPath -> $S3BaseUrl/$s3Key" $Yellow
-        }
-        else {
-            try {
-                aws s3 cp $localPath "$S3BaseUrl/$s3Key" --content-type "text/html" --region $Region
-                Write-Status "✓ Uploaded $s3Key" $Green
-            }
-            catch {
-                Write-Status "✗ Failed to upload $s3Key" $Red
-                Write-Status $_.Exception.Message $Red
-            }
-        }
-    }
-    
-    # Upload JS files
-    $jsFiles = Get-ChildItem -Path $BuildDir -Filter "*.js"
-    foreach ($file in $jsFiles) {
-        $s3Key = $file.Name
-        $localPath = $file.FullName
-        if ($DryRun) {
-            Write-Status "Would upload: $localPath -> $S3BaseUrl/$s3Key" $Yellow
-        }
-        else {
-            try {
-                aws s3 cp $localPath "$S3BaseUrl/$s3Key" --content-type "application/javascript" --region $Region
-                Write-Status "✓ Uploaded $s3Key" $Green
-            }
-            catch {
-                Write-Status "✗ Failed to upload $s3Key" $Red
-                Write-Status $_.Exception.Message $Red
-            }
-        }
-    }
-
-    # Upload default-models.json and default-providers.json
-    $jsonFiles = @('default-models.json', 'default-providers.json')
-    foreach ($jsonFile in $jsonFiles) {
-        $localPath = Join-Path $BuildDir $jsonFile
-        if (Test-Path $localPath) {
-            if ($DryRun) {
-                Write-Status "Would upload: $localPath -> $S3BaseUrl/$jsonFile" $Yellow
-            } else {
-                try {
-                    aws s3 cp $localPath "$S3BaseUrl/$jsonFile" --content-type "application/json" --region $Region
-                    Write-Status "✓ Uploaded $jsonFile" $Green
-                } catch {
-                    Write-Status "✗ Failed to upload $jsonFile" $Red
-                    Write-Status $_.Exception.Message $Red
-                }
-            }
-        } else {
-            Write-Status "✗ $localPath not found, skipping upload." $Red
-        }
-    }
-
-    # Upload manifest.xml
-    $manifestPath = Join-Path $BuildDir 'manifest.xml'
-    if (Test-Path $manifestPath) {
-        if ($DryRun) {
-            Write-Status "Would upload: $manifestPath -> $S3BaseUrl/manifest.xml" $Yellow
-        } else {
-            try {
-                aws s3 cp $manifestPath "$S3BaseUrl/manifest.xml" --content-type "text/xml" --region $Region
-                Write-Status "✓ Uploaded manifest.xml" $Green
-            } catch {
-                Write-Status "✗ Failed to upload manifest.xml" $Red
-                Write-Status $_.Exception.Message $Red
-            }
-        }
-    } else {
-        Write-Status "✗ $manifestPath not found, skipping upload." $Red
-    }
-    
-    # Upload CSS files
-    $cssFiles = Get-ChildItem -Path $BuildDir -Filter "*.css"
-    foreach ($file in $cssFiles) {
-        $s3Key = $file.Name
-        $localPath = $file.FullName
-        
-        if ($DryRun) {
-            Write-Status "Would upload: $localPath -> $S3BaseUrl/$s3Key" $Yellow
-        }
-        else {
-            try {
-                aws s3 cp $localPath "$S3BaseUrl/$s3Key" --content-type "text/css" --region $Region
-                Write-Status "✓ Uploaded $s3Key" $Green
-            }
-            catch {
-                Write-Status "✗ Failed to upload $s3Key" $Red
-                Write-Status $_.Exception.Message $Red
-            }
-        }
-    }
-    
-    # Upload icon files if they exist
-    $iconDir = "$BuildDir/icons"
-    if (Test-Path $iconDir) {
-        $iconFiles = Get-ChildItem -Path $iconDir -File
-        foreach ($file in $iconFiles) {
-            $s3Key = "icons/$($file.Name)"
-            $localPath = $file.FullName
-            if ($DryRun) {
-                Write-Status "Would upload: $localPath -> $S3BaseUrl/$s3Key" $Yellow
-            }
-            else {
-                try {
-                    aws s3 cp $localPath "$S3BaseUrl/$s3Key" --region $Region
-                    Write-Status "✓ Uploaded $s3Key" $Green
-                }
-                catch {
-                    Write-Status "✗ Failed to upload $s3Key" $Red
-                    Write-Status $_.Exception.Message $Red
-                }
-            }
-        }
-    }
-}
-
-function Verify-Deployment {
-    if ($DryRun) {
-        Write-Status "Skipping verification in dry run mode" $Yellow
-        return
-    }
-    Write-Status "Verifying deployment..." $Blue
-    $baseUrl = $HttpBaseUrl
-    # Test index.html accessibility
-    try {
-        $response = Invoke-WebRequest -Uri "$baseUrl/index.html" -Method Head -TimeoutSec 10
-        if ($response.StatusCode -eq 200) {
-            Write-Status "✓ index.html is accessible" $Green
-        }
-        else {
-            Write-Status "✗ index.html returned status: $($response.StatusCode)" $Red
-        }
-    }
-    catch {
-        Write-Status "✗ Failed to verify index.html accessibility" $Red
-        Write-Status $_.Exception.Message $Red
-    }
-}
-
-function Show-NextSteps {
-    Write-Status "`nDeployment Summary:" $Blue
-    Write-Status "Environment: $Environment" $Blue
-    Write-Status "Bucket: $BucketName" $Blue
-    Write-Status "Region: $Region" $Blue
-    Write-Status "Base URL: $HttpBaseUrl" $Blue
-    Write-Status "`nNext Steps:" $Blue
-    Write-Status "1. Validate the manifest: npm run validate-manifest" $Yellow
-    Write-Status "2. Sideload the manifest in Outlook" $Yellow
-    Write-Status "3. Test the add-in functionality" $Yellow
-}
-
-# Main execution
-Write-Status "PromptEmail Outlook Add-in Deployment" $Blue
-Write-Status "=====================================" $Blue
-
-# Run deployment steps
-Test-Prerequisites
-Backup-Manifest
-
-# Update manifest.xml URLs for this environment
-Update-ManifestUrls
 
 # Update online references before deployment
-Write-Status "Updating online references..." $Blue
-try {
-    Update-OnlineReferences
-    Write-Status "✓ Online references updated" $Green
-} catch {
-    Write-Status "✗ Failed to update online references: $_" $Red
-    exit 1
+if ($DryRun) {
+    Write-Status "[DryRun] Would update embedded URLs and normalize manifest.xml" 'Yellow'
 }
+else {
+    Write-Status "Updating Urls in public folder files..." 'Blue'
+    try {
+        # Update embedded URLs in public files using new URI-spec config
+        Update-EmbeddedUrls -RootPath (Join-Path $ProjectRoot 'public') -NewHost $envConfig.publicUri.host -NewScheme $envConfig.publicUri.protocol
+        Write-Status "✓ Urls in public folder files updated" 'Green'
 
-Deploy-Assets
-
-# Upload all files in ./public/online to S3, preserving folder structure
-$onlineDir = Join-Path $ProjectRoot 'public/online'
-if (Test-Path $onlineDir) {
-    Write-Status "Uploading ./public/online assets to S3..." $Blue
-    $onlineFiles = Get-ChildItem -Path $onlineDir -Recurse -File
-    foreach ($file in $onlineFiles) {
-        $relativePath = $file.FullName.Substring($onlineDir.Length + 1) -replace '\\','/'
-        $s3Key = "online/$relativePath"
-        $localPath = $file.FullName
-        if ($DryRun) {
-            Write-Status "Would upload: $localPath -> s3://$BucketName/$s3Key" $Yellow
-        } else {
-            try {
-                aws s3 cp $localPath "s3://$BucketName/$s3Key" --region $Region
-                Write-Status "✓ Uploaded $s3Key" $Green
-            } catch {
-                Write-Status "✗ Failed to upload $s3Key" $Red
-                Write-Status $_.Exception.Message $Red
+        # Post-process manifest.xml to normalize all URLs (remove double slashes except after protocol)
+        $publicManifestPath = Join-Path $publicDir 'manifest.xml'
+        if (Test-Path $publicManifestPath) {
+            $manifestContent = Get-Content $publicManifestPath -Raw
+            $normalizedManifest = $manifestContent -replace '://', '___PROTOCOL_SLASH___'
+            $normalizedManifest = $normalizedManifest -replace '/{2,}', '/'
+            $normalizedManifest = $normalizedManifest -replace '___PROTOCOL_SLASH___', '://'
+            if ($manifestContent -ne $normalizedManifest) {
+                Set-Content $publicManifestPath $normalizedManifest
+                Write-Status "✓ Normalized double slashes in manifest.xml URLs" 'Green'
             }
         }
     }
+    catch {
+        Write-Status "✗ Failed to update Urls in publif folder files: $_" 'Red'
+        exit 1
+    }
 }
 
-Verify-Deployment
+# deploy content of .\public to target web server (e.g. s3)
+Deploy-Assets
+# verify index.html is web-accessible in web server
+Test-Deployment
 Show-NextSteps
-
-Write-Status "`nDeployment completed!" $Green
-

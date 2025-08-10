@@ -1,16 +1,26 @@
 {
   "environments": {
     "Dev": {
-      "bucketName": "293354421824-outlook-email-assistant-dev",
       "region": "us-east-1",
-      "publicDnsSuffix": "s3-website-us-east-1.amazonaws.com",
-      "s3DnsSuffix": "s3.amazonaws.com"
+      "publicUri": {
+        "protocol": "https",
+        "host": "293354421824-outlook-email-assistant-dev.s3.us-east-1.amazonaws.com"
+      },
+      "s3Uri": {
+        "protocol": "s3",
+        "host": "293354421824-outlook-email-assistant-dev"
+      }
     },
     "Prd": {
-      "bucketName": "293354421824-outlook-email-assistant-prd",
       "region": "us-east-1",
-      "publicDnsSuffix": "cloudfront.net",
-      "s3DnsSuffix": "s3.amazonaws.com"
+      "publicUri": {
+        "protocol": "https",
+        "host": "293354421824-outlook-email-assistant-prd.s3.us-east-1.amazonaws.com"
+      },
+      "s3Uri": {
+        "protocol": "s3",
+        "host": "293354421824-outlook-email-assistant-prd"
+      }
     }
   }
 }
