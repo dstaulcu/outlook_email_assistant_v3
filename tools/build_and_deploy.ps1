@@ -55,7 +55,7 @@ function Update-EmbeddedUrls {
 
         if ($matchFound) {
             $do_replacement = $true
-            Write-Host "✓ Public file match found: $($matchFound -join ', ') for url: $($url.URL) in file: $($url.File)"
+            Write-Host "Public file match found: $($matchFound -join ', ') for url: $($url.URL) in file: $($url.File)"
             # we need to get the fullpath to file from matching filename
             $matchFoundFullName = ($files | Where-Object { $_.name -eq $matchFound }[0]).FullName
             # Normalize path for reference in URL
@@ -65,7 +65,7 @@ function Update-EmbeddedUrls {
         }
         elseif ($url.URL -match $otherStrings) {
             $do_replacement = $true
-            Write-Host "✓ String match found for url: $($url.URL) in file: $($url.File)"
+            Write-Host "String match found for url: $($url.URL) in file: $($url.File)"
             $AbsolutePath_new = $originalUri.AbsolutePath
         }
         # Normalize double slashes (except after protocol) for all replacements
@@ -77,7 +77,11 @@ function Update-EmbeddedUrls {
         }
         else {
             $do_replacement = $false
-            Write-Host "⚠️  No public file name or match found for url: $($url.URL) in file: $($url.File)"
+            if ($url.url -match '\.[^\.]{0,3}$') {
+                Write-status "⚠️  No public file name or match found in SEEMINGLY file-oriented url: $($url.URL) in file: $($url.File)" 'yellow'
+            } else {
+                # Write-status "⚠️  No public file name or match found in SEEMLINGLY folder-oriented url: $($url.URL) in file: $($url.File)"
+            }
         }
 
         if ($do_replacement -eq $true) {
@@ -100,8 +104,8 @@ function Update-EmbeddedUrls {
             $newUriString = $newUriString -replace '/{2,}', '/'
             $newUriString = $newUriString -replace '___PROTOCOL_SLASH___', '://'
 
-            Write-Host "`tReplacing originalUri: `\"$($url.URL)`\" with:"
-            write-host "`t               newUri: `\"$($newUriString)`\""
+            write-status "`tReplacing originalUri: `"$($url.URL)`" with:"
+            write-status "`t               newUri: `"$($newUriString)`""
 
             if ($PSCmdlet.ShouldProcess($url.File, "Replace '$($url.URL)' with '$newUriString'")) {
                 $content = Get-Content -Path $url.File -Raw
@@ -155,7 +159,7 @@ function Deploy-Assets {
         }
         if ($confirm -eq 'YES') {
             try {
-                Write-Status "Clearing all items from S3 bucket: $BucketName" 'Yellow'
+                Write-Status "Clearing all items from S3 bucket: $BucketName"
                 aws s3 rm "$S3BaseUrl/" --recursive --region $Region
                 Write-Status "✓ Cleared all items from S3 bucket: $BucketName" 'Green'
             }
