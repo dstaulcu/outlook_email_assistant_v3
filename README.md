@@ -4,19 +4,22 @@ AI-Powered Email Analysis Outlook Add-in that enhances email productivity throug
 
 ## Features
 
-- **AI-Powered Email Analysis**: Intelligent email classification and response assistance
-- **Security-First Design**: Built-in classification detection and compliance logging
-- **Accessible Interface**: Keyboard navigation and screen reader support
-- **Configurable AI Models**: Support for self-hosted and cloud LLM endpoints
-- **Persistent Preferences**: Settings saved across sessions
+- **AI-Powered Email Analysis**: Intelligent email classification, tone detection, and response assistance
+- **Multi-Provider AI Support**: OpenAI, Anthropic, Azure OpenAI, Ollama (local), and custom endpoints
+- **Security-First Design**: Built-in classification detection (UNCLASSIFIED, SECRET, etc.) with compliance logging
+- **Accessible Interface**: Full keyboard navigation, screen reader support, and high-contrast mode
+- **Advanced Settings Management**: Persistent settings with Office 365 roaming and local backup
+- **Real-time Email Processing**: Extract email content, analyze sentiment, and generate contextual responses
+- **Windows Logging Integration**: PowerShell-based event logging to Windows Application Log
 
 ## Quick Start
 
 ### Prerequisites
 
 - Node.js 16+ and npm
-- Outlook Desktop (Microsoft 365)
-- AWS CLI configured (for deployment)
+- Outlook Desktop (Microsoft 365 subscription)
+- PowerShell 5.1+ or PowerShell Core 7+ (Windows)
+- AWS CLI configured (for deployment to S3)
 
 ### Installation
 
@@ -30,47 +33,106 @@ npm install
 npm run build
 ```
 
-3. Configure your AWS S3 bucket in `deploy.ps1`
+3. Configure deployment environment in `tools\deployment-environments.json`
 
-4. Deploy to S3:
+4. Deploy using the build and deploy script:
 ```bash
-npm run deploy
+.\tools\build_and_deploy.ps1 -Environment Prd
 ```
 
 5. Sideload the manifest (`manifest.xml`) in Outlook
 
 ### Development
 
-- **Start development server**: `npm run dev`
+- **Start development watcher**: `npm run dev`
 - **Build for production**: `npm run build`
+- **Deploy to environment**: `.\tools\build_and_deploy.ps1 -Environment Dev`
 - **Validate manifest**: `npm run validate-manifest`
 
 ## Architecture
 
-- **Frontend**: Vanilla JavaScript + HTML/CSS
-- **Hosting**: AWS S3 static website hosting
-- **Integration**: Office Add-in manifest for Outlook ribbon and taskpane
-- **Logging**: PowerShell-based Windows Application Log integration
+### Frontend Stack
+- **Framework**: Vanilla JavaScript with ES6 modules and classes
+- **Build System**: Webpack 5 with HtmlWebpackPlugin and CopyWebpackPlugin
+- **Styling**: CSS3 with CSS custom properties and Grid/Flexbox layouts
+- **Bundling**: Separate bundles for taskpane and commands functionality
+
+### Core Services Architecture
+- **EmailAnalyzer**: Extracts and processes email content from Office.js API
+- **AIService**: Multi-provider AI integration (OpenAI, Anthropic, Azure, Ollama, Custom)
+- **ClassificationDetector**: Security classification pattern matching and validation
+- **SettingsManager**: Dual-storage settings (Office.js roaming + localStorage backup)
+- **Logger**: Windows Application Log integration via PowerShell
+- **UIController**: State management, loading states, and user feedback
+- **AccessibilityManager**: ARIA live regions, keyboard navigation, screen reader support
+
+### Deployment Architecture
+- **Hosting**: AWS S3 static website hosting with CloudFront-ready configuration
+- **Build Pipeline**: PowerShell-based build and deployment automation
+- **Environment Management**: Multi-environment support (Dev/Prd) with URL rewriting
+- **Asset Management**: Automated file discovery and URL updating for deployments
+
+### Office Integration
+- **Manifest**: Office Add-in manifest with ribbon integration
+- **API Integration**: Office.js API for email reading, writing, and user context
+- **Extension Points**: Message read and compose command surfaces
+- **Authentication**: Office 365 user profile integration
 
 ## Security & Compliance
 
-- Email classification detection (UNCLASSIFIED, SECRET, etc.)
-- User override warnings with audit logging
-- Secure API key storage
-- No sensitive content in telemetry
+- **Email Classification Detection**: Automatic detection of security markings (UNCLASSIFIED, CONFIDENTIAL, SECRET, TOP SECRET, COSMIC TOP SECRET)
+- **User Override Protection**: Warning system with mandatory user acknowledgment for classified content
+- **Audit Logging**: Comprehensive event logging to Windows Application Log with sanitized data
+- **Data Privacy**: Sensitive content filtering in logs and telemetry
+- **API Key Security**: Secure storage using Office.js roaming settings with localStorage fallback
+- **Content Sanitization**: Automatic removal of sensitive data from all logging and telemetry
 
 ## Directory Structure
 
 ```
-├── public/                 # Static assets and HTML
-├── src/                   # Source code
-│   ├── services/          # Modular service layer
-│   ├── ui/               # UI components and controls
-│   └── utils/            # Utility functions
-├── manifest.xml          # Office Add-in manifest
-├── deploy.ps1           # Deployment script
-└── webpack.config.js    # Build configuration
+├── public/                     # Built assets (generated by webpack)
+├── src/                       # Source code
+│   ├── services/              # Core business logic services
+│   │   ├── AIService.js       # Multi-provider AI integration
+│   │   ├── EmailAnalyzer.js   # Email content extraction
+│   │   ├── ClassificationDetector.js # Security classification detection
+│   │   ├── SettingsManager.js # Persistent settings management
+│   │   └── Logger.js          # Windows event logging
+│   ├── ui/                    # UI components and accessibility
+│   │   ├── UIController.js    # State management and user feedback
+│   │   └── AccessibilityManager.js # ARIA and keyboard navigation
+│   ├── taskpane/              # Main application interface
+│   │   ├── taskpane.html      # Application HTML template
+│   │   └── taskpane.js        # Main application controller
+│   ├── commands/              # Office ribbon commands
+│   │   ├── commands.html      # Command page template
+│   │   └── commands.js        # Ribbon command handlers
+│   ├── assets/               # Static assets (CSS, icons)
+│   ├── default-providers.json # Default AI provider configurations
+│   ├── default-models.json   # Default AI model configurations
+│   └── manifest.xml          # Office Add-in manifest
+├── tools/                    # Build and deployment scripts
+│   ├── build_and_deploy.ps1  # Main build and deploy automation
+│   ├── deploy.ps1           # Legacy deployment script
+│   └── deployment-environments.json # Environment configurations
+├── webpack.config.js        # Build configuration
+└── package.json            # Project dependencies and scripts
 ```
+
+## AI Provider Support
+
+The add-in supports multiple AI providers with automatic model discovery:
+
+- **OpenAI**: GPT-4, GPT-3.5-turbo with API key authentication
+- **Anthropic**: Claude models with API key authentication  
+- **Azure OpenAI**: Enterprise-grade OpenAI models with Azure authentication
+- **Ollama**: Local LLM hosting with automatic model detection via `/api/tags`
+- **Custom Endpoints**: Support for any OpenAI-compatible API endpoint
+
+### Default Configurations
+- Provider endpoints and models are defined in `src/default-providers.json` and `src/default-models.json`
+- Runtime model discovery for Ollama installations
+- Fallback configurations for offline scenarios
 
 ## Deployment
 
@@ -78,10 +140,12 @@ See `DEPLOYMENT_GUIDE.md` for detailed deployment instructions.
 
 ## Contributing
 
-1. Create a feature branch
-2. Make your changes
-3. Test thoroughly
-4. Submit a pull request
+1. Fork the repository and create a feature branch
+2. Follow the development setup in `DEVELOPER_GUIDE.md`
+3. Make your changes with appropriate tests
+4. Ensure accessibility compliance (WCAG 2.1 AA)
+5. Update documentation as needed
+6. Submit a pull request with clear description
 
 ## License
 
