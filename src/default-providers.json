@@ -1,10 +1,10 @@
 {
-  "openai": {
-    "label": "OpenAI",
-    "baseUrl": "https://api.openai.com/v1"
-  },
   "ollama": {
     "label": "Ollama (Local)",
     "baseUrl": "http://localhost:11434"
-  }
+  },
+  "openai": {
+    "label": "OpenAI",
+    "baseUrl": "https://api.openai.com/v1"
+  }  
 }

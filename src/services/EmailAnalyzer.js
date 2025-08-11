@@ -22,20 +22,87 @@ export class EmailAnalyzer {
             const item = Office.context.mailbox.item;
             this.currentItem = item;
 
-            // Get email body
-            item.body.getAsync(Office.CoercionType.Text, (result) => {
-                if (result.status === Office.AsyncResultStatus.Failed) {
-                    reject(new Error('Failed to get email body: ' + result.error.message));
-                    return;
-                }
+            // Create promises for async property access
+            const getFromAsync = () => {
+                return new Promise((resolveFrom) => {
+                    if (item.from && typeof item.from.getAsync === 'function') {
+                        item.from.getAsync((result) => {
+                            if (result.status === Office.AsyncResultStatus.Succeeded) {
+                                resolveFrom(result.value);
+                            } else {
+                                console.warn('[EmailAnalyzer] Failed to get from async:', result.error);
+                                resolveFrom(null);
+                            }
+                        });
+                    } else {
+                        resolveFrom(item.from);
+                    }
+                });
+            };
+
+            const getRecipientsAsync = () => {
+                return new Promise((resolveRecipients) => {
+                    if (item.to && typeof item.to.getAsync === 'function') {
+                        item.to.getAsync((result) => {
+                            if (result.status === Office.AsyncResultStatus.Succeeded) {
+                                resolveRecipients({ to: result.value, cc: item.cc, bcc: item.bcc });
+                            } else {
+                                console.warn('[EmailAnalyzer] Failed to get recipients async:', result.error);
+                                resolveRecipients({ to: null, cc: item.cc, bcc: item.bcc });
+                            }
+                        });
+                    } else {
+                        resolveRecipients({ to: item.to, cc: item.cc, bcc: item.bcc });
+                    }
+                });
+            };
+
+            const getSubjectAsync = () => {
+                return new Promise((resolveSubject) => {
+                    if (item.subject && typeof item.subject.getAsync === 'function') {
+                        item.subject.getAsync((result) => {
+                            if (result.status === Office.AsyncResultStatus.Succeeded) {
+                                resolveSubject(result.value);
+                            } else {
+                                console.warn('[EmailAnalyzer] Failed to get subject async:', result.error);
+                                resolveSubject(item.subject);
+                            }
+                        });
+                    } else {
+                        resolveSubject(item.subject);
+                    }
+                });
+            };
+
+            // Get email body and other properties
+            Promise.all([
+                new Promise((resolveBody, rejectBody) => {
+                    item.body.getAsync(Office.CoercionType.Text, (result) => {
+                        if (result.status === Office.AsyncResultStatus.Failed) {
+                            rejectBody(new Error('Failed to get email body: ' + result.error.message));
+                            return;
+                        }
+                        resolveBody(result.value || '');
+                    });
+                }),
+                getFromAsync(),
+                getRecipientsAsync(),
+                getSubjectAsync()
+            ]).then(([bodyText, fromValue, recipientsValue, subjectValue]) => {
+                console.log('[EmailAnalyzer] Async property results:', {
+                    subject: subjectValue,
+                    from: fromValue,
+                    recipients: recipientsValue,
+                    itemType: item.itemType
+                });
 
                 const userProfile = Office.context.mailbox.userProfile;
                 const emailData = {
-                    subject: this.getSubjectString(item),
-                    from: this.getFromAddress(item),
-                    recipients: this.getRecipients(item),
-                    body: result.value || '',
-                    bodyLength: (result.value || '').length,
+                    subject: this.getSubjectString({ subject: subjectValue }),
+                    from: this.getFromAddressFromValue(fromValue, item),
+                    recipients: this.getRecipientsFromValue(recipientsValue),
+                    body: bodyText,
+                    bodyLength: bodyText.length,
                     date: item.dateTimeCreated ? new Date(item.dateTimeCreated) : new Date(),
                     hasAttachments: (item.attachments && item.attachments.length > 0),
                     itemType: item.itemType,
@@ -43,47 +110,30 @@ export class EmailAnalyzer {
                     sender: userProfile ? `${userProfile.displayName || 'Unknown'} <${userProfile.emailAddress || 'unknown@domain.com'}>` : 'Unknown Sender'
                 };
 
+                console.log('[EmailAnalyzer] Final processed email data:', emailData);
                 resolve(emailData);
-            });
+            }).catch(reject);
         });
     }
 
     /**
-     * Gets the subject as a string
-     * @param {Office.Item} item - The Outlook item
-     * @returns {string} Subject string
-     */
-    getSubjectString(item) {
-        if (!item.subject) return '';
-        
-        // Handle case where subject might be an object
-        if (typeof item.subject === 'object') {
-            // If it has a value property, use that
-            if (item.subject.value) return String(item.subject.value);
-            // If it has a toString method, use that
-            if (typeof item.subject.toString === 'function') return item.subject.toString();
-            // Otherwise return empty string
-            return '';
-        }
-        
-        return String(item.subject);
-    }
-
-    /**
-     * Gets the sender's email address
+     * Gets the sender's email address from async value
+     * @param {Object} fromValue - The async from value
      * @param {Office.Item} item - The Outlook item
      * @returns {string} Sender email address
      */
-    getFromAddress(item) {
+    getFromAddressFromValue(fromValue, item) {
+        console.log('[EmailAnalyzer] Processing from value:', fromValue);
+        
+        if (fromValue) {
+            const displayName = (fromValue.displayName !== undefined) ? String(fromValue.displayName) : 'Unknown';
+            const emailAddress = (fromValue.emailAddress !== undefined) ? String(fromValue.emailAddress) : 'unknown@domain.com';
+            return `${displayName} <${emailAddress}>`;
+        }
+        
+        // Fallback to synchronous access
         if (item.itemType === Office.MailboxEnums.ItemType.Message) {
-            // For received messages
-            if (item.from) {
-                const displayName = item.from.displayName || 'Unknown';
-                const emailAddress = item.from.emailAddress || 'unknown@domain.com';
-                return `${displayName} <${emailAddress}>`;
-            } else {
-                return 'Unknown Sender';
-            }
+            return 'Unknown Sender';
         } else {
             // For compose items, return current user
             const userProfile = Office.context.mailbox.userProfile;
@@ -98,39 +148,179 @@ export class EmailAnalyzer {
     }
 
     /**
-     * Gets all recipients (To, CC, BCC)
+     * Gets recipients from async values
+     * @param {Object} recipientsValue - Object with to, cc, bcc arrays
+     * @returns {string} Formatted recipients string
+     */
+    getRecipientsFromValue(recipientsValue) {
+        console.log('[EmailAnalyzer] Processing recipients value:', recipientsValue);
+        
+        const recipients = [];
+        
+        // Helper function to safely format recipient
+        const formatRecipient = (r) => {
+            if (!r) return 'Unknown <unknown@domain.com>';
+            const displayName = (r.displayName !== undefined) ? String(r.displayName) : 'Unknown';
+            const emailAddress = (r.emailAddress !== undefined) ? String(r.emailAddress) : 'unknown@domain.com';
+            return `${displayName} <${emailAddress}>`;
+        };
+
+        try {
+            // Get To recipients
+            if (recipientsValue.to && Array.isArray(recipientsValue.to) && recipientsValue.to.length > 0) {
+                const toRecipients = recipientsValue.to.map(formatRecipient);
+                recipients.push('To: ' + toRecipients.join(', '));
+            }
+
+            // Get CC recipients
+            if (recipientsValue.cc && Array.isArray(recipientsValue.cc) && recipientsValue.cc.length > 0) {
+                const ccRecipients = recipientsValue.cc.map(formatRecipient);
+                recipients.push('CC: ' + ccRecipients.join(', '));
+            }
+
+            // Get BCC recipients (if available)
+            if (recipientsValue.bcc && Array.isArray(recipientsValue.bcc) && recipientsValue.bcc.length > 0) {
+                const bccRecipients = recipientsValue.bcc.map(formatRecipient);
+                recipients.push('BCC: ' + bccRecipients.join(', '));
+            }
+        } catch (error) {
+            console.error('[EmailAnalyzer] Error processing recipients value:', error);
+        }
+
+        const result = recipients.join('; ') || 'No recipients';
+        console.log('[EmailAnalyzer] Final recipients string:', result);
+        return result;
+    }
+
+    /**
+     * Gets the subject as a string
+     * @param {Office.Item} item - The Outlook item
+     * @returns {string} Subject string
+     */
+    getSubjectString(item) {
+        console.log('[EmailAnalyzer] Processing subject:', item.subject, typeof item.subject);
+        
+        if (!item.subject) return 'No Subject';
+        
+        // Handle case where subject might be an object
+        if (typeof item.subject === 'object') {
+            console.log('[EmailAnalyzer] Subject is object:', item.subject);
+            // If it has a value property, use that
+            if (item.subject && item.subject.value !== undefined) return String(item.subject.value);
+            // If it has a text property, use that
+            if (item.subject && item.subject.text !== undefined) return String(item.subject.text);
+            // If it has a toString method, use that
+            if (item.subject && typeof item.subject.toString === 'function') {
+                const stringified = item.subject.toString();
+                if (stringified !== '[object Object]') return stringified;
+            }
+            // Try JSON.stringify as last resort
+            try {
+                const jsonString = JSON.stringify(item.subject);
+                if (jsonString && jsonString !== '{}') return jsonString;
+            } catch (e) {
+                console.warn('[EmailAnalyzer] Failed to stringify subject:', e);
+            }
+            // Otherwise return empty string
+            return 'No Subject';
+        }
+        
+        return String(item.subject);
+    }
+
+    /**
+     * Gets the sender's email address with multiple fallback strategies
+     * @param {Office.Item} item - The Outlook item
+     * @returns {string} Sender email address
+     */
+    getFromAddress(item) {
+        console.log('[EmailAnalyzer] Processing from address:', {
+            itemType: item.itemType,
+            from: item.from,
+            messageType: Office.MailboxEnums.ItemType.Message,
+            isReadMode: Office.context.mailbox.item.itemType === Office.MailboxEnums.ItemType.Message
+        });
+        
+        // Try different approaches based on the item type and mode
+        if (item.itemType === Office.MailboxEnums.ItemType.Message) {
+            // For received messages in read mode
+            if (item.from) {
+                console.log('[EmailAnalyzer] From object:', item.from);
+                const displayName = (item.from.displayName !== undefined) ? String(item.from.displayName) : 'Unknown';
+                const emailAddress = (item.from.emailAddress !== undefined) ? String(item.from.emailAddress) : 'unknown@domain.com';
+                return `${displayName} <${emailAddress}>`;
+            } 
+            
+            // Fallback: try to get sender from internetMessageId or other properties
+            if (item.sender) {
+                console.log('[EmailAnalyzer] Using sender property:', item.sender);
+                const displayName = (item.sender.displayName !== undefined) ? String(item.sender.displayName) : 'Unknown';
+                const emailAddress = (item.sender.emailAddress !== undefined) ? String(item.sender.emailAddress) : 'unknown@domain.com';
+                return `${displayName} <${emailAddress}>`;
+            }
+            
+            return 'Unknown Sender';
+        } else {
+            // For compose items, return current user
+            const userProfile = Office.context.mailbox.userProfile;
+            console.log('[EmailAnalyzer] User profile:', userProfile);
+            if (userProfile) {
+                const displayName = userProfile.displayName || 'Unknown';
+                const emailAddress = userProfile.emailAddress || 'unknown@domain.com';
+                return `${displayName} <${emailAddress}>`;
+            } else {
+                return 'Current User';
+            }
+        }
+    }
+
+    /**
+     * Gets all recipients (To, CC, BCC) with enhanced error handling
      * @param {Office.Item} item - The Outlook item
      * @returns {string} Formatted recipients string
      */
     getRecipients(item) {
+        console.log('[EmailAnalyzer] Processing recipients:', {
+            to: item.to,
+            cc: item.cc,
+            bcc: item.bcc
+        });
+        
         const recipients = [];
 
         // Helper function to safely format recipient
         const formatRecipient = (r) => {
-            const displayName = r.displayName || 'Unknown';
-            const emailAddress = r.emailAddress || 'unknown@domain.com';
+            if (!r) return 'Unknown <unknown@domain.com>';
+            const displayName = (r.displayName !== undefined) ? String(r.displayName) : 'Unknown';
+            const emailAddress = (r.emailAddress !== undefined) ? String(r.emailAddress) : 'unknown@domain.com';
             return `${displayName} <${emailAddress}>`;
         };
 
-        // Get To recipients
-        if (item.to && item.to.length > 0) {
-            const toRecipients = item.to.map(formatRecipient);
-            recipients.push('To: ' + toRecipients.join(', '));
+        try {
+            // Get To recipients
+            if (item.to && Array.isArray(item.to) && item.to.length > 0) {
+                const toRecipients = item.to.map(formatRecipient);
+                recipients.push('To: ' + toRecipients.join(', '));
+            }
+
+            // Get CC recipients
+            if (item.cc && Array.isArray(item.cc) && item.cc.length > 0) {
+                const ccRecipients = item.cc.map(formatRecipient);
+                recipients.push('CC: ' + ccRecipients.join(', '));
+            }
+
+            // Get BCC recipients (if available)
+            if (item.bcc && Array.isArray(item.bcc) && item.bcc.length > 0) {
+                const bccRecipients = item.bcc.map(formatRecipient);
+                recipients.push('BCC: ' + bccRecipients.join(', '));
+            }
+        } catch (error) {
+            console.error('[EmailAnalyzer] Error processing recipients:', error);
         }
 
-        // Get CC recipients
-        if (item.cc && item.cc.length > 0) {
-            const ccRecipients = item.cc.map(formatRecipient);
-            recipients.push('CC: ' + ccRecipients.join(', '));
-        }
-
-        // Get BCC recipients (if available)
-        if (item.bcc && item.bcc.length > 0) {
-            const bccRecipients = item.bcc.map(formatRecipient);
-            recipients.push('BCC: ' + bccRecipients.join(', '));
-        }
-
-        return recipients.join('; ') || 'No recipients';
+        const result = recipients.join('; ') || 'No recipients';
+        console.log('[EmailAnalyzer] Processed recipients:', result);
+        return result;
     }
 
     /**
