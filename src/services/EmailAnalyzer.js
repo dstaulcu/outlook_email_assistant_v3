@@ -74,6 +74,50 @@ export class EmailAnalyzer {
                 });
             };
 
+            const getDateAsync = () => {
+                return new Promise((resolveDate) => {
+                    console.log('[EmailAnalyzer] Getting date - itemType:', item.itemType);
+                    console.log('[EmailAnalyzer] Office context mode:', Office.context.mailbox.item ? 'item available' : 'no item');
+                    console.log('[EmailAnalyzer] Available properties:', Object.keys(item));
+                    
+                    // Log all date-related properties we can find
+                    const dateProps = {};
+                    ['dateTimeCreated', 'dateTimeSent', 'dateTimeModified', 'dateTimeReceived'].forEach(prop => {
+                        if (item[prop] !== undefined) {
+                            dateProps[prop] = item[prop];
+                        }
+                    });
+                    console.log('[EmailAnalyzer] Available date properties:', dateProps);
+                    
+                    // Better detection: if we have a subject with RE: or FW: and we're in compose mode,
+                    // this means we're composing a reply to an existing email
+                    const subjectValue = item.subject && typeof item.subject === 'object' ? item.subject.value : item.subject;
+                    const isReplyMode = subjectValue && (subjectValue.startsWith('RE:') || subjectValue.startsWith('FW:') || subjectValue.startsWith('Re:') || subjectValue.startsWith('Fw:'));
+                    const isComposeMode = item.itemType === Office.MailboxEnums.ItemType.Message && 
+                                         (item.itemClass === 'IPM.Note' || !item.internetMessageId);
+                    
+                    console.log('[EmailAnalyzer] Subject:', subjectValue);
+                    console.log('[EmailAnalyzer] Is reply mode:', isReplyMode);
+                    console.log('[EmailAnalyzer] Is compose mode:', isComposeMode);
+                    
+                    if (isReplyMode) {
+                        // In reply mode, we should not show the current time as "sent date"
+                        // Instead, we should indicate this is a composition or try to get the original email's date
+                        console.log('[EmailAnalyzer] In reply composition mode, using placeholder date');
+                        resolveDate(null); // Use null to indicate this is a compose scenario
+                    } else if (item.itemType === Office.MailboxEnums.ItemType.Message && !isComposeMode) {
+                        // This should be a received email - use dateTimeCreated
+                        const emailDate = item.dateTimeCreated ? new Date(item.dateTimeCreated) : new Date();
+                        console.log('[EmailAnalyzer] Using email date for received message:', emailDate);
+                        resolveDate(emailDate);
+                    } else {
+                        // For new compose items
+                        console.log('[EmailAnalyzer] New compose item, using null date');
+                        resolveDate(null);
+                    }
+                });
+            };
+
             // Get email body and other properties
             Promise.all([
                 new Promise((resolveBody, rejectBody) => {
@@ -87,12 +131,14 @@ export class EmailAnalyzer {
                 }),
                 getFromAsync(),
                 getRecipientsAsync(),
-                getSubjectAsync()
-            ]).then(([bodyText, fromValue, recipientsValue, subjectValue]) => {
+                getSubjectAsync(),
+                getDateAsync()
+            ]).then(([bodyText, fromValue, recipientsValue, subjectValue, dateValue]) => {
                 console.log('[EmailAnalyzer] Async property results:', {
                     subject: subjectValue,
                     from: fromValue,
                     recipients: recipientsValue,
+                    date: dateValue,
                     itemType: item.itemType
                 });
 
@@ -103,7 +149,7 @@ export class EmailAnalyzer {
                     recipients: this.getRecipientsFromValue(recipientsValue),
                     body: bodyText,
                     bodyLength: bodyText.length,
-                    date: item.dateTimeCreated ? new Date(item.dateTimeCreated) : new Date(),
+                    date: dateValue,
                     hasAttachments: (item.attachments && item.attachments.length > 0),
                     itemType: item.itemType,
                     conversationId: item.conversationId,

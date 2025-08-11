@@ -155,7 +155,7 @@ body {
 
 .header {
     background: var(--bg-secondary);
-    padding: var(--spacing-md);
+    padding: var(--spacing-sm);
     border-bottom: 1px solid var(--border-color);
     text-align: center;
 }
@@ -188,7 +188,7 @@ body {
 
 .main-content {
     flex: 1;
-    padding: var(--spacing-md);
+    padding: var(--spacing-sm);
     overflow-y: auto;
 }
 
@@ -240,13 +240,13 @@ body {
 
 /* === Sections === */
 section {
-    margin-bottom: var(--spacing-lg);
+    margin-bottom: var(--spacing-md);
 }
 
 section h2 {
     font-size: var(--font-size-md);
     font-weight: 600;
-    margin: 0 0 var(--spacing-md) 0;
+    margin: 0 0 var(--spacing-sm) 0;
     color: var(--text-primary);
     border-bottom: 2px solid var(--color-primary);
     padding-bottom: var(--spacing-xs);
@@ -255,7 +255,7 @@ section h2 {
 section h3 {
     font-size: var(--font-size-sm);
     font-weight: 600;
-    margin: var(--spacing-md) 0 var(--spacing-sm) 0;
+    margin: var(--spacing-sm) 0 var(--spacing-sm) 0;
     color: var(--text-primary);
 }
 
@@ -273,15 +273,20 @@ section h3 {
     gap: var(--spacing-sm);
 }
 
-@media (min-width: 400px) {
+/* Remove the media query to keep single column layout for taskpane */
+/* @media (min-width: 400px) {
     .summary-grid {
         grid-template-columns: repeat(2, 1fr);
     }
-}
+} */
 
 .summary-item {
     display: flex;
     flex-direction: column;
+    padding: var(--spacing-sm);
+    background: var(--bg-secondary);
+    border-radius: var(--border-radius);
+    border-left: 3px solid var(--accent-color);
 }
 
 .summary-item label {
@@ -297,6 +302,7 @@ section h3 {
     font-size: var(--font-size-sm);
     color: var(--text-primary);
     word-break: break-word;
+    line-height: 1.4;
 }
 
 /* === Forms === */
@@ -519,7 +525,8 @@ section h3 {
     margin: var(--spacing-lg) 0;
 }
 
-@media (min-width: 400px) {
+/* Keep single column layout for taskpane - better for narrow width */
+/* @media (min-width: 400px) {
     .action-buttons {
         flex-direction: row;
         flex-wrap: wrap;
@@ -529,7 +536,7 @@ section h3 {
         flex: 1;
         min-width: 140px;
     }
-}
+} */
 
 /* === Warning Panel === */
 .warning-panel {

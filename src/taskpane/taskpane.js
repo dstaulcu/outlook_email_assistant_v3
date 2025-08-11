@@ -277,10 +277,23 @@ class TaskpaneApp {
     }
 
     displayEmailSummary(email) {
-        document.getElementById('email-from').textContent = email.from || 'Unknown';
-        document.getElementById('email-subject').textContent = email.subject || 'No Subject';
-        document.getElementById('email-recipients').textContent = email.recipients || 'Unknown';
-        document.getElementById('email-length').textContent = `${email.bodyLength || 0} characters`;
+        // Only update the fields we're actually showing
+        const subjectElement = document.getElementById('email-subject');
+        if (subjectElement) {
+            subjectElement.textContent = email.subject || 'No Subject';
+        }
+        
+        // Format and display sent date
+        const sentElement = document.getElementById('email-sent');
+        if (sentElement) {
+            if (email.date) {
+                sentElement.textContent = this.formatDate(email.date);
+            } else {
+                // This is likely a compose mode (reply/new email)
+                sentElement.textContent = 'Composing...';
+            }
+        }
+        
         // Classification display logic
         let classification = email.classification;
         let classificationText;
@@ -289,7 +302,40 @@ class TaskpaneApp {
         } else {
             classificationText = classification;
         }
-        document.getElementById("email-classification").textContent = classificationText;
+        const classificationElement = document.getElementById("email-classification");
+        if (classificationElement) {
+            classificationElement.textContent = classificationText;
+        }
+        
+        // Commented out fields for debugging purposes
+        // document.getElementById('email-from').textContent = email.from || 'Unknown';
+        // document.getElementById('email-recipients').textContent = email.recipients || 'Unknown';
+        // document.getElementById('email-length').textContent = `${email.bodyLength || 0} characters`;
+    }
+
+    formatDate(date) {
+        try {
+            const emailDate = new Date(date);
+            const now = new Date();
+            const diffMs = now - emailDate;
+            const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+            
+            // If it's today, show time only
+            if (diffDays === 0) {
+                return emailDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            }
+            // If it's within the last 7 days, show day and time
+            else if (diffDays <= 7) {
+                return emailDate.toLocaleDateString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+            }
+            // Otherwise show full date
+            else {
+                return emailDate.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+            }
+        } catch (error) {
+            console.error('[TaskPane] Error formatting date:', error);
+            return 'Unknown';
+        }
     }
 
     async analyzeEmail() {
@@ -619,11 +665,15 @@ class TaskpaneApp {
             return;
         }
         
+        // Clean up the text for display (remove tabs, normalize whitespace)
+        let cleanText = response.text.replace(/\t/g, '').trim();
+        cleanText = cleanText.replace(/[ ]+/g, ' '); // Replace multiple spaces with single space
+        
         container.innerHTML = `
             <div class="response-content">
                 <h3>Generated Response</h3>
                 <div class="response-text" id="response-text-content">
-                    ${this.escapeHtml(response.text).replace(/\n/g, '<br>')}
+                    ${this.escapeHtml(cleanText).replace(/\n/g, '<br>')}
                 </div>
             </div>
         `;
@@ -650,35 +700,177 @@ class TaskpaneApp {
 
     async insertResponse() {
         try {
-            const responseText = document.getElementById('response-text-content').textContent;
+            // Get the cleaned text from the displayed content instead of the raw response
+            const responseTextElement = document.getElementById('response-text-content');
+            const responseText = responseTextElement ? responseTextElement.textContent : '';
+            
             console.log('[InsertResponse] Response text:', responseText);
             if (!responseText || responseText.trim().length === 0) {
                 this.uiController.showError('No response text to insert.');
                 return;
             }
+            
             // Check Office.js and mailbox context
-            if (typeof Office === 'undefined' || !Office.context || !Office.context.mailbox || !Office.context.mailbox.item || !Office.context.mailbox.item.body || typeof Office.context.mailbox.item.body.setAsync !== 'function') {
+            if (typeof Office === 'undefined' || !Office.context || !Office.context.mailbox || !Office.context.mailbox.item || !Office.context.mailbox.item.body) {
                 this.uiController.showError('Office.js mailbox context is not available. Please run this add-in inside Outlook.');
-                console.error('[InsertResponse] Office.js mailbox context missing or setAsync not available.');
+                console.error('[InsertResponse] Office.js mailbox context missing.');
                 return;
             }
-            // Use Office.js to insert into email body
-            Office.context.mailbox.item.body.setAsync(
-                responseText,
-                { coercionType: Office.CoercionType.Text },
-                (result) => {
-                    if (result.status === Office.AsyncResultStatus.Succeeded) {
-                        this.uiController.showStatus('Response inserted into email.');
-                    } else {
-                        console.error('[InsertResponse] Office.js error:', result);
-                        this.uiController.showError('Failed to insert response into email.');
+            
+            // Format text for Outlook with proper line breaks
+            const formattedText = this.formatTextForOutlook(responseText);
+            console.log('[InsertResponse] Formatted text:', formattedText);
+            
+            // Try to use setSelectedDataAsync first (inserts at cursor position) with plain text
+            if (typeof Office.context.mailbox.item.body.setSelectedDataAsync === 'function') {
+                Office.context.mailbox.item.body.setSelectedDataAsync(
+                    formattedText,
+                    { coercionType: Office.CoercionType.Text },
+                    (result) => {
+                        if (result.status === Office.AsyncResultStatus.Succeeded) {
+                            this.uiController.showStatus('Response inserted at cursor position.');
+                        } else {
+                            console.error('[InsertResponse] setSelectedDataAsync error:', result);
+                            // Fallback to HTML approach
+                            this.insertResponseAsHtml(responseText);
+                        }
                     }
-                }
-            );
+                );
+            } else {
+                // Fallback to HTML approach
+                this.insertResponseAsHtml(responseText);
+            }
         } catch (error) {
             console.error('Failed to insert response:', error);
             this.uiController.showError('Failed to insert response into email.');
         }
+    }
+
+    /**
+     * Format text for Outlook with proper line breaks
+     * @param {string} text - Plain text to format
+     * @returns {string} Formatted text with proper line breaks
+     */
+    formatTextForOutlook(text) {
+        // Clean up the text first - remove tabs and normalize whitespace
+        let formatted = text.replace(/\t/g, '').trim(); // Remove all tabs
+        formatted = formatted.replace(/[ ]+/g, ' '); // Replace multiple spaces with single space
+        
+        // Use Windows-style line breaks
+        formatted = formatted.replace(/\n/g, '\r\n');
+        
+        // Add extra spacing between existing paragraphs (convert double line breaks to triple)
+        formatted = formatted.replace(/\r\n\r\n/g, '\r\n\r\n\r\n');
+        
+        // If there are no existing paragraph breaks, try to detect natural break points
+        if (!formatted.includes('\r\n\r\n')) {
+            // Look for common greeting patterns and add line breaks
+            formatted = formatted.replace(/(Hi\s+\w+,)/gi, '$1\r\n\r\n');
+            formatted = formatted.replace(/(Dear\s+\w+,)/gi, '$1\r\n\r\n');
+            formatted = formatted.replace(/(Hello\s+\w+,)/gi, '$1\r\n\r\n');
+            
+            // Look for "Thanks for" patterns that often start new paragraphs
+            formatted = formatted.replace(/\s+(Thanks for [^.!?]*[.!?])/gi, '\r\n\r\n$1');
+            
+            // Look for sentence endings followed by capital letters (likely paragraph breaks)
+            formatted = formatted.replace(/([.!?])\s+([A-Z][a-z])/g, '$1\r\n\r\n$2');
+            
+            // Handle closing salutations - look for the pattern and ensure proper spacing
+            // Match: sentence ending, optional space, salutation, optional comma, space, name
+            formatted = formatted.replace(/([.!?])\s*(Best\s+regards?),?\s+(\w+(?:\s+\w+)*)/gi, '$1\r\n\r\n$2,\r\n$3');
+            formatted = formatted.replace(/([.!?])\s*(Best),?\s+(\w+(?:\s+\w+)*)/gi, '$1\r\n\r\n$2,\r\n$3');
+            formatted = formatted.replace(/([.!?])\s*(Sincerely),?\s+(\w+(?:\s+\w+)*)/gi, '$1\r\n\r\n$2,\r\n$3');
+            formatted = formatted.replace(/([.!?])\s*(Thanks?),?\s+(\w+(?:\s+\w+)*)/gi, '$1\r\n\r\n$2,\r\n$3');
+            formatted = formatted.replace(/([.!?])\s*(Regards?),?\s+(\w+(?:\s+\w+)*)/gi, '$1\r\n\r\n$2,\r\n$3');
+            formatted = formatted.replace(/([.!?])\s*(Cheers),?\s+(\w+(?:\s+\w+)*)/gi, '$1\r\n\r\n$2,\r\n$3');
+        }
+        
+        // Clean up any excessive line breaks (more than 3 consecutive)
+        formatted = formatted.replace(/\r\n\r\n\r\n\r\n+/g, '\r\n\r\n\r\n');
+        
+        // Final cleanup - remove any leading/trailing whitespace
+        formatted = formatted.trim();
+        
+        console.log('[formatTextForOutlook] Original:', JSON.stringify(text));
+        console.log('[formatTextForOutlook] Formatted:', JSON.stringify(formatted));
+        
+        return formatted;
+    }
+
+    insertResponseAsHtml(responseText) {
+        const htmlContent = this.convertTextToHtml(responseText);
+        
+        if (typeof Office.context.mailbox.item.body.setSelectedDataAsync === 'function') {
+            Office.context.mailbox.item.body.setSelectedDataAsync(
+                htmlContent,
+                { coercionType: Office.CoercionType.Html },
+                (result) => {
+                    if (result.status === Office.AsyncResultStatus.Succeeded) {
+                        this.uiController.showStatus('Response inserted as HTML.');
+                    } else {
+                        console.error('[InsertResponse] HTML setSelectedDataAsync error:', result);
+                        this.insertResponseFallback(htmlContent);
+                    }
+                }
+            );
+        } else {
+            this.insertResponseFallback(htmlContent);
+        }
+    }
+
+    insertResponseFallback(htmlContent) {
+        Office.context.mailbox.item.body.setAsync(
+            htmlContent,
+            { coercionType: Office.CoercionType.Html },
+            (result) => {
+                if (result.status === Office.AsyncResultStatus.Succeeded) {
+                    this.uiController.showStatus('Response inserted into email body.');
+                } else {
+                    console.error('[InsertResponse] setAsync error:', result);
+                    this.uiController.showError('Failed to insert response into email.');
+                }
+            }
+        );
+    }
+
+    /**
+     * Converts plain text to HTML, preserving line breaks and paragraphs
+     * @param {string} text - Plain text to convert
+     * @returns {string} HTML formatted text
+     */
+    convertTextToHtml(text) {
+        // Escape HTML entities first
+        let html = text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+        
+        // Split by double line breaks to identify paragraphs
+        const paragraphs = html.split(/\n\s*\n/);
+        const htmlParagraphs = [];
+        
+        for (let paragraph of paragraphs) {
+            const trimmed = paragraph.trim();
+            if (trimmed) {
+                // Replace single line breaks with <br> and wrap in <p> with Outlook-friendly styling
+                const formattedParagraph = trimmed.replace(/\n/g, '<br>');
+                htmlParagraphs.push(`<p style="margin-top: 0; margin-bottom: 1em; line-height: 1.5;">${formattedParagraph}</p>`);
+            }
+        }
+        
+        // If no paragraphs detected, treat as single paragraph
+        if (htmlParagraphs.length === 0 && html.trim()) {
+            const formattedText = html.trim().replace(/\n/g, '<br>');
+            htmlParagraphs.push(`<p style="margin-top: 0; margin-bottom: 1em; line-height: 1.5;">${formattedText}</p>`);
+        }
+        
+        // Create the final HTML
+        const finalHtml = htmlParagraphs.join('');
+        
+        console.log('[convertTextToHtml] Converted HTML:', finalHtml);
+        return finalHtml;
     }
 
     showRefineButton() {

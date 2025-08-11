@@ -145,12 +145,14 @@ export class AIService {
      * @returns {string} Analysis prompt
      */
     buildAnalysisPrompt(emailData) {
+        const dateStr = emailData.date ? new Date(emailData.date).toLocaleString() : 'Compose Mode';
         return `Please analyze the following email and provide insights:
 
 **Email Details:**
 From: ${emailData.from}
 Subject: ${emailData.subject}
 Recipients: ${emailData.recipients}
+Sent: ${dateStr}
 Length: ${emailData.bodyLength} characters
 
 **Email Content:**
@@ -215,6 +217,7 @@ Format your response as JSON with the following structure:
             `**Original Email:**\n` +
             `From: ${emailData.from}\n` +
             `Subject: ${emailData.subject}\n` +
+            `Sent: ${emailData.date ? new Date(emailData.date).toLocaleString() : 'Compose Mode'}\n` +
             `Content: ${emailData.cleanBody || emailData.body}\n\n` +
             `**Analysis Summary:**\n` +
             `- Key Points: ${(analysis && analysis.keyPoints) ? analysis.keyPoints.join(', ') : 'Not analyzed'}\n` +
@@ -498,18 +501,38 @@ Please provide the refined email response text only.`;
      * @returns {Object} Response object
      */
     parseResponseResult(responseText) {
-        // Normalize newlines: replace 2+ newlines with exactly two, and single \r\n or \r with \n
+        // Normalize newlines and clean up whitespace issues
         let text = responseText.trim();
+        
+        // Remove tabs and normalize them to spaces
+        text = text.replace(/\t/g, ' ');
+        
         // Convert \r\n and \r to \n
         text = text.replace(/\r\n?/g, '\n');
+        
+        // Clean up multiple spaces (but preserve intentional spacing)
+        text = text.replace(/[ ]{2,}/g, ' ');
+        
         // Replace 3+ newlines with exactly two
         text = text.replace(/\n{3,}/g, '\n\n');
-        // Optionally, trim leading/trailing whitespace on each line
-        text = text.split('\n').map(line => line.trimEnd()).join('\n');
+        
+        // Trim leading/trailing whitespace on each line and remove empty lines at start/end
+        const lines = text.split('\n').map(line => line.trim());
+        
+        // Remove empty lines from the beginning and end
+        while (lines.length > 0 && lines[0] === '') {
+            lines.shift();
+        }
+        while (lines.length > 0 && lines[lines.length - 1] === '') {
+            lines.pop();
+        }
+        
+        text = lines.join('\n');
+        
         return {
             text,
             generatedAt: new Date().toISOString(),
-            wordCount: text.split(/\s+/).length
+            wordCount: text.split(/\s+/).filter(word => word.length > 0).length
         };
     }
 }
