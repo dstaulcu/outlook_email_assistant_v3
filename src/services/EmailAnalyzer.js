@@ -78,7 +78,6 @@ export class EmailAnalyzer {
                 return new Promise((resolveDate) => {
                     console.log('[EmailAnalyzer] Getting date - itemType:', item.itemType);
                     console.log('[EmailAnalyzer] Office context mode:', Office.context.mailbox.item ? 'item available' : 'no item');
-                    console.log('[EmailAnalyzer] Available properties:', Object.keys(item));
                     
                     // Log all date-related properties we can find
                     const dateProps = {};
@@ -89,30 +88,25 @@ export class EmailAnalyzer {
                     });
                     console.log('[EmailAnalyzer] Available date properties:', dateProps);
                     
-                    // Better detection: if we have a subject with RE: or FW: and we're in compose mode,
-                    // this means we're composing a reply to an existing email
-                    const subjectValue = item.subject && typeof item.subject === 'object' ? item.subject.value : item.subject;
-                    const isReplyMode = subjectValue && (subjectValue.startsWith('RE:') || subjectValue.startsWith('FW:') || subjectValue.startsWith('Re:') || subjectValue.startsWith('Fw:'));
+                    // For compose mode, especially replies, we don't want to show a misleading sent date
+                    // We'll determine this based on the item properties and context
                     const isComposeMode = item.itemType === Office.MailboxEnums.ItemType.Message && 
                                          (item.itemClass === 'IPM.Note' || !item.internetMessageId);
                     
-                    console.log('[EmailAnalyzer] Subject:', subjectValue);
-                    console.log('[EmailAnalyzer] Is reply mode:', isReplyMode);
                     console.log('[EmailAnalyzer] Is compose mode:', isComposeMode);
                     
-                    if (isReplyMode) {
-                        // In reply mode, we should not show the current time as "sent date"
-                        // Instead, we should indicate this is a composition or try to get the original email's date
-                        console.log('[EmailAnalyzer] In reply composition mode, using placeholder date');
-                        resolveDate(null); // Use null to indicate this is a compose scenario
-                    } else if (item.itemType === Office.MailboxEnums.ItemType.Message && !isComposeMode) {
+                    if (isComposeMode) {
+                        // In compose mode (including replies), don't show a sent date
+                        console.log('[EmailAnalyzer] In compose mode, using null date');
+                        resolveDate(null);
+                    } else if (item.itemType === Office.MailboxEnums.ItemType.Message) {
                         // This should be a received email - use dateTimeCreated
                         const emailDate = item.dateTimeCreated ? new Date(item.dateTimeCreated) : new Date();
                         console.log('[EmailAnalyzer] Using email date for received message:', emailDate);
                         resolveDate(emailDate);
                     } else {
-                        // For new compose items
-                        console.log('[EmailAnalyzer] New compose item, using null date');
+                        // For other item types
+                        console.log('[EmailAnalyzer] Other item type, using null date');
                         resolveDate(null);
                     }
                 });
@@ -143,13 +137,19 @@ export class EmailAnalyzer {
                 });
 
                 const userProfile = Office.context.mailbox.userProfile;
+                
+                // Check if this is a reply after we have the subject
+                const subjectStr = this.getSubjectString({ subject: subjectValue });
+                const isReply = subjectStr && (subjectStr.startsWith('RE:') || subjectStr.startsWith('Re:') || subjectStr.startsWith('FW:') || subjectStr.startsWith('Fw:'));
+                
                 const emailData = {
-                    subject: this.getSubjectString({ subject: subjectValue }),
+                    subject: subjectStr,
                     from: this.getFromAddressFromValue(fromValue, item),
                     recipients: this.getRecipientsFromValue(recipientsValue),
                     body: bodyText,
                     bodyLength: bodyText.length,
                     date: dateValue,
+                    isReply: isReply, // Add this flag
                     hasAttachments: (item.attachments && item.attachments.length > 0),
                     itemType: item.itemType,
                     conversationId: item.conversationId,

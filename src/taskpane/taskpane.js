@@ -283,17 +283,6 @@ class TaskpaneApp {
             subjectElement.textContent = email.subject || 'No Subject';
         }
         
-        // Format and display sent date
-        const sentElement = document.getElementById('email-sent');
-        if (sentElement) {
-            if (email.date) {
-                sentElement.textContent = this.formatDate(email.date);
-            } else {
-                // This is likely a compose mode (reply/new email)
-                sentElement.textContent = 'Composing...';
-            }
-        }
-        
         // Classification display logic
         let classification = email.classification;
         let classificationText;
@@ -311,31 +300,6 @@ class TaskpaneApp {
         // document.getElementById('email-from').textContent = email.from || 'Unknown';
         // document.getElementById('email-recipients').textContent = email.recipients || 'Unknown';
         // document.getElementById('email-length').textContent = `${email.bodyLength || 0} characters`;
-    }
-
-    formatDate(date) {
-        try {
-            const emailDate = new Date(date);
-            const now = new Date();
-            const diffMs = now - emailDate;
-            const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-            
-            // If it's today, show time only
-            if (diffDays === 0) {
-                return emailDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            }
-            // If it's within the last 7 days, show day and time
-            else if (diffDays <= 7) {
-                return emailDate.toLocaleDateString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
-            }
-            // Otherwise show full date
-            else {
-                return emailDate.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
-            }
-        } catch (error) {
-            console.error('[TaskPane] Error formatting date:', error);
-            return 'Unknown';
-        }
     }
 
     async analyzeEmail() {
