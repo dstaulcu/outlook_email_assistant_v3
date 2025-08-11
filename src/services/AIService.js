@@ -99,6 +99,16 @@ export class AIService {
      * @returns {Promise<Object>} Generated response
      */
     async generateResponse(emailData, analysis, config) {
+        // Ensure analysis is not null - provide default if missing
+        if (!analysis) {
+            console.warn('Analysis is null, providing default analysis structure');
+            analysis = {
+                keyPoints: ['No analysis available'],
+                sentiment: 'neutral',
+                responseStrategy: 'respond professionally'
+            };
+        }
+        
         const prompt = this.buildResponsePrompt(emailData, analysis, config);
         
         try {
@@ -207,9 +217,9 @@ Format your response as JSON with the following structure:
             `Subject: ${emailData.subject}\n` +
             `Content: ${emailData.cleanBody || emailData.body}\n\n` +
             `**Analysis Summary:**\n` +
-            `- Key Points: ${analysis.keyPoints?.join(', ') || 'Not analyzed'}\n` +
-            `- Sentiment: ${analysis.sentiment || 'Not analyzed'}\n` +
-            `- Recommended Strategy: ${analysis.responseStrategy || 'Not analyzed'}\n\n` +
+            `- Key Points: ${(analysis && analysis.keyPoints) ? analysis.keyPoints.join(', ') : 'Not analyzed'}\n` +
+            `- Sentiment: ${(analysis && analysis.sentiment) || 'Not analyzed'}\n` +
+            `- Recommended Strategy: ${(analysis && analysis.responseStrategy) || 'Not analyzed'}\n\n` +
             `**Response Requirements:**\n` +
             `- Length: ${lengthMap[config.length] || 'medium length'}\n` +
             `- Tone: ${toneMap[config.tone] || 'professional'}\n` +

@@ -14,6 +14,10 @@ function Update-EmbeddedUrls {
         [string]$NewHost,
         [string]$NewScheme = "https"
     )
+    
+    # Comprehensive URL pattern to match HTTP/HTTPS/S3 URLs
+    $urlPattern = '(?i)(?:https?://|s3://)[a-zA-Z0-9\-\.]+(?:\.[a-zA-Z0-9\-\.]+)*(?:\:[0-9]+)?(?:/[^\s"''<>]*)?'
+    
     # (Removed stray $updatedContent normalization from here)
     $files = Get-ChildItem -Path $RootPath -Recurse -File
     $urlResults = @()
@@ -21,7 +25,6 @@ function Update-EmbeddedUrls {
         try {
             $content = Get-Content -Path $file.FullName -Raw -ErrorAction Stop
             $matches = [regex]::Matches($content, $urlPattern)
-
             foreach ($match in $matches) {
                 $urlResults += [PSCustomObject]@{
                     File = $file.FullName
@@ -119,7 +122,6 @@ function Update-EmbeddedUrls {
 
 }
 
-
 # Update references in online.orig and copy to online
 function Write-Status {
     param([string]$Message, [string]$Color = "White")
@@ -147,6 +149,11 @@ function Test-Prerequisites {
 }
 
 function Deploy-Assets {
+    param(
+        [Parameter(Mandatory)]
+        [string]$BuildDir
+    )
+    
     Write-Status "Deploying assets to S3 bucket: $BucketName (region: $Region)" $Blue
 
     if ($DryRun) {
@@ -176,6 +183,8 @@ function Deploy-Assets {
 
     # Upload all files in public
     $allFiles = Get-ChildItem -Path $BuildDir -Recurse -File
+
+    Write-Status "Found $($allFiles.Count) files to upload from: $BuildDir" $Blue
 
     foreach ($file in $allFiles) {
         # Compute S3 key relative to $BuildDir
@@ -374,7 +383,7 @@ else {
 }
 
 # deploy content of .\public to target web server (e.g. s3)
-Deploy-Assets
+Deploy-Assets -BuildDir $publicDir
 # verify index.html is web-accessible in web server
 Test-Deployment
 Show-NextSteps

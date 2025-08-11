@@ -50,6 +50,14 @@ module.exports = {
           globOptions: {
             ignore: ['**/*.scss']
           }
+        },
+        {
+          from: './src/default-providers.json',
+          to: 'default-providers.json'
+        },
+        {
+          from: './src/default-models.json',
+          to: 'default-models.json'
         }
       ]
     })

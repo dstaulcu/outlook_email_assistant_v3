@@ -38,8 +38,9 @@ TaskpaneApp (main controller)
 ### Build Pipeline
 - **Webpack 5**: Module bundling and asset processing
 - **Entry Points**: Separate bundles for taskpane and commands
-- **Asset Processing**: Icon optimization, CSS bundling, HTML template processing
+- **Asset Processing**: Icon optimization, CSS bundling, HTML template processing, JSON configuration files
 - **Source Maps**: Development debugging support
+- **Configuration Files**: Automatic copying of `default-providers.json` and `default-models.json` to public directory
 
 ## Initial Setup
 

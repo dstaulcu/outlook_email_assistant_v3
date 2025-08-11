@@ -36,9 +36,12 @@ class TaskpaneApp {
 
     switchToResponseTab() {
         // Switch to the response tab in the UI
-        const responseTabButton = document.querySelector('.tab-button[aria-controls="response-tab"]');
+        const responseTabButton = document.querySelector('.tab-button[aria-controls="panel-response"]');
         if (responseTabButton) {
+            console.log('[TaskpaneApp] Switching to response tab');
             responseTabButton.click();
+        } else {
+            console.error('[TaskpaneApp] Response tab button not found');
         }
     }
     showResponseSection() {
@@ -150,6 +153,7 @@ class TaskpaneApp {
         this.modelServiceSelect = document.getElementById('model-service');
         this.modelSelectGroup = document.getElementById('model-select-group');
         this.modelSelect = document.getElementById('model-select');
+        this.baseUrlInput = document.getElementById('base-url');
         // Populate model service dropdown from defaultProvidersConfig
         if (this.modelServiceSelect && this.defaultProvidersConfig) {
             this.modelServiceSelect.innerHTML = Object.entries(this.defaultProvidersConfig)
@@ -386,12 +390,25 @@ class TaskpaneApp {
             const config = this.getAIConfiguration();
             const responseConfig = this.getResponseConfiguration();
             
+            // Ensure we have analysis data, or create default
+            let analysisData = this.currentAnalysis;
+            if (!analysisData) {
+                console.warn('No current analysis available, creating default analysis');
+                analysisData = {
+                    keyPoints: ['Email content needs response'],
+                    sentiment: 'neutral',
+                    responseStrategy: 'respond professionally and appropriately'
+                };
+            }
+            
             // Generate response
             this.currentResponse = await this.aiService.generateResponse(
                 this.currentEmail, 
-                this.currentAnalysis,
+                analysisData,
                 { ...config, ...responseConfig }
             );
+            
+            console.log('[TaskpaneApp] Response generated:', this.currentResponse);
             
             // Display response
             this.displayResponse(this.currentResponse);
@@ -445,20 +462,27 @@ class TaskpaneApp {
         if (this.modelSelect && this.modelSelect.value) {
             model = this.modelSelect.value;
         }
+        const apiKeyElement = document.getElementById('api-key');
+        const endpointUrlElement = document.getElementById('endpoint-url');
         return {
             service: this.modelServiceSelect ? this.modelServiceSelect.value : '',
-            apiKey: document.getElementById('api-key').value,
-            endpointUrl: document.getElementById('endpoint-url').value,
+            apiKey: apiKeyElement ? apiKeyElement.value : '',
+            endpointUrl: endpointUrlElement ? endpointUrlElement.value : '',
             model
         };
     }
 
     getResponseConfiguration() {
+        const responseLengthElement = document.getElementById('response-length');
+        const responseToneElement = document.getElementById('response-tone');
+        const responseUrgencyElement = document.getElementById('response-urgency');
+        const customInstructionsElement = document.getElementById('custom-instructions');
+        
         return {
-            length: parseInt(document.getElementById('response-length').value),
-            tone: parseInt(document.getElementById('response-tone').value),
-            urgency: parseInt(document.getElementById('response-urgency').value),
-            customInstructions: document.getElementById('custom-instructions').value
+            length: responseLengthElement ? parseInt(responseLengthElement.value) : 50,
+            tone: responseToneElement ? parseInt(responseToneElement.value) : 50,
+            urgency: responseUrgencyElement ? parseInt(responseUrgencyElement.value) : 50,
+            customInstructions: customInstructionsElement ? customInstructionsElement.value : ''
         };
     }
 
@@ -489,7 +513,7 @@ class TaskpaneApp {
         if (this.modelServiceSelect.value === 'ollama') {
             this.modelSelectGroup.style.display = '';
             this.modelSelect.innerHTML = '<option value="">Loading...</option>';
-            const baseUrl = this.baseUrlInput.value || 'http://localhost:11434';
+            const baseUrl = (this.baseUrlInput && this.baseUrlInput.value) || 'http://localhost:11434';
             try {
                 models = await AIService.fetchOllamaModels(baseUrl);
                 this.modelSelect.innerHTML = models.length
@@ -512,7 +536,7 @@ class TaskpaneApp {
             if (endpoint.endsWith('/')) endpoint = endpoint.slice(0, -1);
             const apiKey = document.getElementById('api-key').value;
             try {
-                const response = await fetch(`${endpoint}/v1/models`, {
+                const response = await fetch(`${endpoint}/models`, {
                     headers: {
                         'Authorization': `Bearer ${apiKey}`
                     }
@@ -581,7 +605,20 @@ class TaskpaneApp {
     }
 
     displayResponse(response) {
+        console.log('[TaskpaneApp] Displaying response:', response);
         const container = document.getElementById('response-draft');
+        
+        if (!container) {
+            console.error('[TaskpaneApp] response-draft container not found');
+            return;
+        }
+        
+        if (!response || !response.text) {
+            console.error('[TaskpaneApp] Invalid response object:', response);
+            container.innerHTML = '<div class="error">Error: Invalid response received</div>';
+            return;
+        }
+        
         container.innerHTML = `
             <div class="response-content">
                 <h3>Generated Response</h3>
@@ -590,6 +627,8 @@ class TaskpaneApp {
                 </div>
             </div>
         `;
+        
+        console.log('[TaskpaneApp] Response displayed successfully');
     }
 
     escapeHtml(text) {
@@ -648,10 +687,12 @@ class TaskpaneApp {
 
     onModelServiceChange(event) {
         const customEndpoint = document.getElementById('custom-endpoint');
-        if (event.target.value === 'custom') {
-            customEndpoint.classList.remove('hidden');
-        } else {
-            customEndpoint.classList.add('hidden');
+        if (customEndpoint) {
+            if (event.target.value === 'custom') {
+                customEndpoint.classList.remove('hidden');
+            } else {
+                customEndpoint.classList.add('hidden');
+            }
         }
         this.saveSettings();
     }

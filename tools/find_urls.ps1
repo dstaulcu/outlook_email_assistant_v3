@@ -4,6 +4,10 @@ function Show-EmbeddedUrls {
         [Parameter(Mandatory)]
         [string]$RootPath
     )
+    
+    # Comprehensive URL pattern to match HTTP/HTTPS/S3 URLs
+    $urlPattern = '(?i)(?:https?://|s3://)[a-zA-Z0-9\-\.]+(?:\.[a-zA-Z0-9\-\.]+)*(?:\:[0-9]+)?(?:/[^\s"''<>]*)?'
+    
     # (Removed stray $updatedContent normalization from here)
     $files = Get-ChildItem -Path $RootPath -Recurse -File
     $urlResults = @()

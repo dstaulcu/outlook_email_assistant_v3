@@ -31,7 +31,7 @@ export class EmailAnalyzer {
 
                 const userProfile = Office.context.mailbox.userProfile;
                 const emailData = {
-                    subject: item.subject || '',
+                    subject: this.getSubjectString(item),
                     from: this.getFromAddress(item),
                     recipients: this.getRecipients(item),
                     body: result.value || '',
@@ -40,12 +40,33 @@ export class EmailAnalyzer {
                     hasAttachments: (item.attachments && item.attachments.length > 0),
                     itemType: item.itemType,
                     conversationId: item.conversationId,
-                    sender: userProfile ? `${userProfile.displayName} <${userProfile.emailAddress}>` : 'Unknown Sender'
+                    sender: userProfile ? `${userProfile.displayName || 'Unknown'} <${userProfile.emailAddress || 'unknown@domain.com'}>` : 'Unknown Sender'
                 };
 
                 resolve(emailData);
             });
         });
+    }
+
+    /**
+     * Gets the subject as a string
+     * @param {Office.Item} item - The Outlook item
+     * @returns {string} Subject string
+     */
+    getSubjectString(item) {
+        if (!item.subject) return '';
+        
+        // Handle case where subject might be an object
+        if (typeof item.subject === 'object') {
+            // If it has a value property, use that
+            if (item.subject.value) return String(item.subject.value);
+            // If it has a toString method, use that
+            if (typeof item.subject.toString === 'function') return item.subject.toString();
+            // Otherwise return empty string
+            return '';
+        }
+        
+        return String(item.subject);
     }
 
     /**
@@ -56,13 +77,23 @@ export class EmailAnalyzer {
     getFromAddress(item) {
         if (item.itemType === Office.MailboxEnums.ItemType.Message) {
             // For received messages
-            return item.from ? 
-                `${item.from.displayName} <${item.from.emailAddress}>` : 
-                'Unknown Sender';
+            if (item.from) {
+                const displayName = item.from.displayName || 'Unknown';
+                const emailAddress = item.from.emailAddress || 'unknown@domain.com';
+                return `${displayName} <${emailAddress}>`;
+            } else {
+                return 'Unknown Sender';
+            }
         } else {
             // For compose items, return current user
-            return Office.context.mailbox.userProfile.displayName + 
-                   ' <' + Office.context.mailbox.userProfile.emailAddress + '>';
+            const userProfile = Office.context.mailbox.userProfile;
+            if (userProfile) {
+                const displayName = userProfile.displayName || 'Unknown';
+                const emailAddress = userProfile.emailAddress || 'unknown@domain.com';
+                return `${displayName} <${emailAddress}>`;
+            } else {
+                return 'Current User';
+            }
         }
     }
 
@@ -74,21 +105,28 @@ export class EmailAnalyzer {
     getRecipients(item) {
         const recipients = [];
 
+        // Helper function to safely format recipient
+        const formatRecipient = (r) => {
+            const displayName = r.displayName || 'Unknown';
+            const emailAddress = r.emailAddress || 'unknown@domain.com';
+            return `${displayName} <${emailAddress}>`;
+        };
+
         // Get To recipients
         if (item.to && item.to.length > 0) {
-            const toRecipients = item.to.map(r => `${r.displayName} <${r.emailAddress}>`);
+            const toRecipients = item.to.map(formatRecipient);
             recipients.push('To: ' + toRecipients.join(', '));
         }
 
         // Get CC recipients
         if (item.cc && item.cc.length > 0) {
-            const ccRecipients = item.cc.map(r => `${r.displayName} <${r.emailAddress}>`);
+            const ccRecipients = item.cc.map(formatRecipient);
             recipients.push('CC: ' + ccRecipients.join(', '));
         }
 
         // Get BCC recipients (if available)
         if (item.bcc && item.bcc.length > 0) {
-            const bccRecipients = item.bcc.map(r => `${r.displayName} <${r.emailAddress}>`);
+            const bccRecipients = item.bcc.map(formatRecipient);
             recipients.push('BCC: ' + bccRecipients.join(', '));
         }
 

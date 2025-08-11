@@ -173,6 +173,8 @@ public/
 ├── taskpane.bundle.js     # Main application logic (minified)
 ├── commands.bundle.js     # Ribbon command handlers
 ├── taskpane.css          # Styles 
+├── default-providers.json # AI provider configurations
+├── default-models.json   # Default model mappings
 ├── icons/                # Optimized icon assets
 │   ├── icon-16.png
 │   ├── icon-32.png  

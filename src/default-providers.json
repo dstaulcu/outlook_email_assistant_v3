@@ -6,17 +6,5 @@
   "ollama": {
     "label": "Ollama (Local)",
     "baseUrl": "http://localhost:11434"
-  },
-  "anthropic": {
-    "label": "Anthropic",
-    "baseUrl": "https://api.anthropic.com/v1"
-  },
-  "azure": {
-    "label": "Azure OpenAI",
-    "baseUrl": "https://your-azure-endpoint.openai.azure.com"
-  },
-  "custom": {
-    "label": "Custom",
-    "baseUrl": ""
   }
 }
