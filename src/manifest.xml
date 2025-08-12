@@ -47,7 +47,6 @@
       <DesktopSettings>
         <SourceLocation DefaultValue="https://293354421824-outlook-email-assistant-prd.s3-website-us-east-1.amazonaws.com/taskpane.html"/>
         <RequestedHeight>250</RequestedHeight>
-        <RequestedWidth>400</RequestedWidth>
       </DesktopSettings>
     </Form>
   </FormSettings>

@@ -18,17 +18,52 @@ function Update-EmbeddedUrls {
     # Comprehensive URL pattern to match HTTP/HTTPS/S3 URLs
     $urlPattern = '(?i)(?:https?://|s3://)[a-zA-Z0-9\-\.]+(?:\.[a-zA-Z0-9\-\.]+)*(?:\:[0-9]+)?(?:/[^\s"''<>]*)?'
     
-    # (Removed stray $updatedContent normalization from here)
+    # Patterns for runtime concatenation - these need to be updated
+    $concatenationPatterns = @(
+        # Pattern: (protocol.toLowerCase() === "https:" ? "https:" : "http:") + "//domain.com/path"
+        '(?i)\(\s*[^)]*\.toLowerCase\(\)\s*===\s*[''"]https:[''"].*?\?\s*[''"]https:[''"].*?:\s*[''"]http:[''"].*?\)\s*\+\s*[''"]//([^''"]+)[''"]',
+        
+        # Pattern: "https:" ? "https:" : "http:") + "//domain.com/path"
+        '(?i)[''"]https:[''"].*?\?\s*[''"]https:[''"].*?:\s*[''"]http:[''"].*?\)\s*\+\s*[''"]//([^''"]+)[''"]',
+        
+        # Pattern: window.location.protocol.toLowerCase() === "https:" ? "https:" : "http:") + "//domain.com
+        '(?i)window\.location\.protocol[^)]*\)\s*\+\s*[''"]//([^''"]+)[''"]',
+        
+        # Pattern: (condition) + "//domain.com/path"  
+        '(?i)\([^)]+\)\s*\+\s*[''"]//([^''"]+)[''"]'
+    )
+    
     $files = Get-ChildItem -Path $RootPath -Recurse -File
     $urlResults = @()
+    $concatenationResults = @()
+    
     foreach ($file in $files) {
         try {
             $content = Get-Content -Path $file.FullName -Raw -ErrorAction Stop
+            
+            # Find regular URLs
             $matches = [regex]::Matches($content, $urlPattern)
             foreach ($match in $matches) {
                 $urlResults += [PSCustomObject]@{
                     File = $file.FullName
                     URL  = $match.Value
+                    Type = "DirectURL"
+                }
+            }
+            
+            # Find concatenation patterns
+            foreach ($pattern in $concatenationPatterns) {
+                $concatMatches = [regex]::Matches($content, $pattern)
+                foreach ($concatMatch in $concatMatches) {
+                    if ($concatMatch.Groups.Count -gt 1) {
+                        $domain = $concatMatch.Groups[1].Value
+                        $concatenationResults += [PSCustomObject]@{
+                            File = $file.FullName
+                            OriginalPattern = $concatMatch.Value
+                            Domain = $domain
+                            Type = "Concatenation"
+                        }
+                    }
                 }
             }
         }
@@ -37,9 +72,10 @@ function Update-EmbeddedUrls {
         }
     }
 
-    # evaluate each url
-    foreach ($url in $urlResults) {
+    Write-Host "Found $($urlResults.Count) direct URLs and $($concatenationResults.Count) concatenation patterns"
 
+    # Process direct URLs (existing logic)
+    foreach ($url in $urlResults) {
         # Check if any name is contained in the URL
         $fileNames = $files | Select-Object -ExpandProperty name
         $otherStrings = "(outlook-email-assistant)"
@@ -95,7 +131,6 @@ function Update-EmbeddedUrls {
             $builder.Query = $originalUri.Query
             $newUri = $builder.Uri            
 
-
             # Restore s3:// scheme if needed
             $newUriString = $newUri.AbsoluteUri
             if ($scheme -eq "s3") {
@@ -107,19 +142,88 @@ function Update-EmbeddedUrls {
             $newUriString = $newUriString -replace '/{2,}', '/'
             $newUriString = $newUriString -replace '___PROTOCOL_SLASH___', '://'
 
-            write-status "`tReplacing originalUri: `"$($url.URL)`" with:"
-            write-status "`t               newUri: `"$($newUriString)`""
+            write-status "`tReplacing direct URL:"
+            write-status "`t  Original: `"$($url.URL)`""
+            write-status "`t       New: `"$($newUriString)`""
+            write-status "`t  Mapping: $($originalUri.Host)$($originalUri.AbsolutePath) → $($NewHost)$($AbsolutePath_new)"
 
             if ($PSCmdlet.ShouldProcess($url.File, "Replace '$($url.URL)' with '$newUriString'")) {
                 $content = Get-Content -Path $url.File -Raw
                 $contentUpdated = $content -replace [regex]::Escape($url.URL), $newUriString
                 Set-Content -Path $url.File -Value $contentUpdated
             }
-
         }
-
     }
 
+    # Process concatenation patterns (enhanced logic with path mapping)
+    foreach ($concat in $concatenationResults) {
+        Write-Host "Processing concatenation pattern in: $($concat.File)"
+        Write-Host "  Original: $($concat.OriginalPattern)"
+        Write-Host "  Domain: $($concat.Domain)"
+        
+        # Parse the domain and path from the concatenated URL
+        $domainAndPath = $concat.Domain
+        $pathParts = $domainAndPath -split "/"
+        $actualDomain = $pathParts[0]
+        $originalPath = if ($pathParts.Length -gt 1) { "/" + ($pathParts[1..($pathParts.Length-1)] -join "/") } else { "" }
+        
+        Write-Host "  Parsed Domain: $actualDomain"
+        Write-Host "  Original Path: $originalPath"
+        
+        # Check if we should replace this domain and map to local files
+        $shouldReplace = $false
+        $localPath = ""
+        
+        # Map external resources to local paths in our S3 bucket
+        switch -Regex ($actualDomain) {
+            "ajax\.aspnetcdn\.com" {
+                $shouldReplace = $true
+                # Map ajax.aspnetcdn.com/ajax/3.5/MicrosoftAjax.js -> /online/ajax.aspnetcdn.com/ajax/3.5/MicrosoftAjax.js
+                $localPath = "/online/ajax.aspnetcdn.com$originalPath"
+                Write-Host "  → Mapped to local path: $localPath"
+            }
+            "alcdn\.msauth\.net" {
+                $shouldReplace = $true
+                # Map alcdn.msauth.net/browser-1p/... -> /online/alcdn.msauth.net/browser-1p/...
+                $localPath = "/online/alcdn.msauth.net$originalPath"
+                Write-Host "  → Mapped to local path: $localPath"
+            }
+            "appsforoffice\.microsoft\.com" {
+                $shouldReplace = $true
+                # Map appsforoffice.microsoft.com/lib/... -> /online/appsforoffice.microsoft.com/lib/...
+                $localPath = "/online/appsforoffice.microsoft.com$originalPath"
+                Write-Host "  → Mapped to local path: $localPath"
+            }
+            "raw\.githubusercontent\.com" {
+                $shouldReplace = $true
+                # Map raw.githubusercontent.com/... -> /online/raw.githubusercontent.com/...
+                $localPath = "/online/raw.githubusercontent.com$originalPath"
+                Write-Host "  → Mapped to local path: $localPath"
+            }
+            default {
+                Write-Host "  → No mapping defined for domain: $actualDomain"
+            }
+        }
+        
+        if ($shouldReplace -and $localPath -and $PSCmdlet.ShouldProcess($concat.File, "Replace concatenation pattern")) {
+            $content = Get-Content -Path $concat.File -Raw
+            
+            # Create the new pattern with our host and the mapped local path
+            $newDomainAndPath = $NewHost + $localPath
+            $newPattern = $concat.OriginalPattern -replace [regex]::Escape($concat.Domain), $newDomainAndPath
+            
+            write-status "`tReplacing concatenation pattern:"
+            write-status "`t  Original: `"$($concat.OriginalPattern)`""
+            write-status "`t       New: `"$($newPattern)`""
+            write-status "`t  Mapping: $actualDomain$originalPath → $NewHost$localPath"
+            
+            $contentUpdated = $content -replace [regex]::Escape($concat.OriginalPattern), $newPattern
+            Set-Content -Path $concat.File -Value $contentUpdated
+        }
+        elseif ($shouldReplace -and -not $localPath) {
+            Write-Host "  ⚠️  Domain recognized but no local path mapping defined" -ForegroundColor Yellow
+        }
+    }
 }
 
 # Update references in online.orig and copy to online
@@ -142,6 +246,48 @@ function Test-Prerequisites {
     }
     catch {
         Write-Status "✗ AWS CLI not found. Please install AWS CLI." 'Red'
+        exit 1
+    }
+    
+    # Check AWS credentials and permissions
+    Write-Status "Validating AWS credentials and permissions..." 'Yellow'
+    try {
+        # Test basic AWS credential validity
+        $whoamiOutput = aws sts get-caller-identity 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $identity = $whoamiOutput | ConvertFrom-Json
+            Write-Status "✓ AWS credentials are valid" 'Green'
+            Write-Status "  Account: $($identity.Account)" 'Cyan'
+            Write-Status "  User/Role: $($identity.Arn.Split('/')[-1])" 'Cyan'
+        }
+        else {
+            Write-Status "✗ AWS credentials are invalid or expired." 'Red'
+            Write-Status "Error details: $whoamiOutput" 'Red'
+            Write-Status "Please run 'aws configure' or refresh your temporary credentials." 'Yellow'
+            exit 1
+        }
+        
+        # Test S3 access to the target bucket
+        $bucketName = $envConfig.s3Uri.host
+        Write-Status "Testing S3 bucket access: $bucketName..." 'Yellow'
+        
+        $s3TestOutput = aws s3 ls "s3://$bucketName" --region $envConfig.region 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Status "✓ S3 bucket access confirmed" 'Green'
+        }
+        else {
+            Write-Status "✗ Cannot access S3 bucket: $bucketName" 'Red'
+            Write-Status "Error details: $s3TestOutput" 'Red'
+            Write-Status "Please verify:" 'Yellow'
+            Write-Status "  - Bucket exists and you have access" 'Yellow'
+            Write-Status "  - Your AWS credentials have S3 permissions" 'Yellow'
+            Write-Status "  - The specified region ($($envConfig.region)) is correct" 'Yellow'
+            exit 1
+        }
+    }
+    catch {
+        Write-Status "✗ Exception during AWS credential validation: $_" 'Red'
+        Write-Status "Please verify your AWS configuration and try again." 'Yellow'
         exit 1
     }
         
@@ -167,12 +313,24 @@ function Deploy-Assets {
         if ($confirm -eq 'YES') {
             try {
                 Write-Status "Clearing all items from S3 bucket: $BucketName"
-                aws s3 rm "$S3BaseUrl/" --recursive --region $Region
-                Write-Status "✓ Cleared all items from S3 bucket: $BucketName" 'Green'
+                $clearOutput = aws s3 rm "$S3BaseUrl/" --recursive --region $Region 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Status "✓ Cleared all items from S3 bucket: $BucketName" 'Green'
+                }
+                else {
+                    Write-Status "✗ Failed to clear S3 bucket: $BucketName" 'Red'
+                    Write-Status "AWS CLI output: $clearOutput" 'Red'
+                    
+                    # Check if this looks like a credential issue
+                    if ($clearOutput -match "expired|invalid|credentials|token|authentication|authorization") {
+                        Write-Status "This appears to be an AWS credential issue." 'Yellow'
+                        Write-Status "Please refresh your AWS credentials and try again." 'Yellow'
+                    }
+                    exit 1
+                }
             }
             catch {
-                Write-Status "✗ Failed to clear S3 bucket: $BucketName" 'Red'
-                Write-Status $_.Exception.Message $Red
+                Write-Status "✗ Exception during S3 bucket clear: $_" 'Red'
                 exit 1
             }
         } else {
@@ -209,17 +367,33 @@ function Deploy-Assets {
         else {
             try {
                 # Compose aws s3 cp command
+                $uploadOutput = $null
                 if ($contentType) {
-                    aws s3 cp $localPath "$S3BaseUrl/$s3Key" --region $Region --content-type $contentType
+                    $uploadOutput = aws s3 cp $localPath "$S3BaseUrl/$s3Key" --region $Region --content-type $contentType 2>&1
                 }
                 else {
-                    aws s3 cp $localPath "$S3BaseUrl/$s3Key" --region $Region
+                    $uploadOutput = aws s3 cp $localPath "$S3BaseUrl/$s3Key" --region $Region 2>&1
                 }
-                Write-Status "✓ Uploaded $s3Key" 'Green'
+                
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Status "✓ Uploaded $s3Key" 'Green'
+                }
+                else {
+                    Write-Status "✗ Failed to upload $s3Key" 'Red'
+                    Write-Status "AWS CLI output: $uploadOutput" 'Red'
+                    
+                    # Check if this looks like a credential issue
+                    if ($uploadOutput -match "expired|invalid|credentials|token|authentication|authorization") {
+                        Write-Status "This appears to be an AWS credential issue." 'Yellow'
+                        Write-Status "Your credentials may have expired during the upload process." 'Yellow'
+                        Write-Status "Please refresh your AWS credentials and try again." 'Yellow'
+                        exit 1
+                    }
+                    exit 1
+                }
             }
             catch {
-                Write-Status "✗ Failed to upload $s3Key" 'Red'
-                Write-Status $_.Exception.Message 'Red'
+                Write-Status "✗ Exception during upload of $s3Key : $_" 'Red'
             }
         }
     }
@@ -295,6 +469,82 @@ Test-Prerequisites
 if (test-path -path $publicDir) {
     remove-item -Path $publicDir -recurse
     mkdir -Path $publicDir | Out-Null
+}
+
+# Ensure required npm packages are installed
+Write-Status "Checking webpack installation..." "Blue"
+try {
+    # First check if webpack is already available and working
+    $webpackVersion = $null
+    $webpackCliVersion = $null
+    $webpackWorking = $false
+    
+    try {
+        $webpackVersion = & webpack --version 2>$null
+        $webpackCliVersion = & webpack-cli --version 2>$null
+        if ($webpackVersion -and $webpackCliVersion) {
+            $webpackWorking = $true
+            Write-Status "✓ webpack is already available (webpack: $webpackVersion, webpack-cli: $webpackCliVersion)" "Green"
+        }
+    }
+    catch {
+        Write-Status "webpack not found or not working, will install..." "Yellow"
+    }
+    
+    # Install webpack if not working
+    if (-not $webpackWorking) {
+        Write-Status "Installing webpack and webpack-cli..." "Yellow"
+        $installOutput = & npm install -g webpack webpack-cli --save-dev 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Status "✓ Global webpack packages installed successfully" "Green"
+            
+            # Verify the installation worked
+            try {
+                $newWebpackVersion = & webpack --version 2>$null
+                $newWebpackCliVersion = & webpack-cli --version 2>$null
+                if ($newWebpackVersion -and $newWebpackCliVersion) {
+                    Write-Status "✓ Verified webpack installation (webpack: $newWebpackVersion, webpack-cli: $newWebpackCliVersion)" "Green"
+                }
+                else {
+                    Write-Status "⚠️  Webpack installed but verification failed, continuing anyway..." "Yellow"
+                }
+            }
+            catch {
+                Write-Status "⚠️  Could not verify webpack installation, continuing anyway..." "Yellow"
+            }
+        }
+        else {
+            Write-Status "⚠️  Global webpack install had issues, trying local install..." "Yellow"
+            Write-Host $installOutput
+            
+            # Try local install as fallback
+            $localInstallOutput = & npm install webpack webpack-cli --save-dev 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Status "✓ Local webpack packages installed successfully" "Green"
+            }
+            else {
+                Write-Status "✗ Both global and local webpack installs failed. See details below:" "Red"
+                Write-Host $localInstallOutput
+                exit 1
+            }
+        }
+    }
+    
+    # Install/update local project dependencies
+    Write-Status "Installing/updating local project dependencies..." "Yellow"
+    $depsOutput = & npm install 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Status "✓ Local dependencies installed successfully" "Green"
+    }
+    else {
+        Write-Status "✗ Failed to install local dependencies. See details below:" "Red"
+        Write-Host $depsOutput
+        exit 1
+    }
+}
+catch {
+    Write-Status "✗ Exception during package installation: $_" "Red"
+    exit 1
 }
 
 # Run npm build and capture output
