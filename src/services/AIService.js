@@ -77,16 +77,23 @@ export class AIService {
     }
     
     async analyzeEmail(emailData, config) {
+        console.log('[AIService] Starting email analysis...');
+        console.log('[AIService] Email data:', emailData);
+        console.log('[AIService] Config:', config);
+        
         const prompt = this.buildAnalysisPrompt(emailData);
+        console.log('[AIService] Built analysis prompt:', prompt);
         
         try {
+            console.log('[AIService] Calling AI for analysis...');
             const response = await this.callAI(prompt, config, 'analysis');
             console.log('[AIService] Raw analysis response:', response);
+            
             const parsed = this.parseAnalysisResponse(response);
-            console.log('[AIService] Parsed analysis:', parsed);
+            console.log('[AIService] Parsed analysis result:', parsed);
             return parsed;
         } catch (error) {
-            console.error('Email analysis failed:', error);
+            console.error('[AIService] Email analysis failed:', error);
             throw new Error('Failed to analyze email: ' + error.message);
         }
     }
@@ -99,9 +106,14 @@ export class AIService {
      * @returns {Promise<Object>} Generated response
      */
     async generateResponse(emailData, analysis, config) {
+        console.log('[AIService] Starting response generation...');
+        console.log('[AIService] Email data:', emailData);
+        console.log('[AIService] Analysis:', analysis);
+        console.log('[AIService] Config:', config);
+        
         // Ensure analysis is not null - provide default if missing
         if (!analysis) {
-            console.warn('Analysis is null, providing default analysis structure');
+            console.warn('[AIService] Analysis is null, providing default analysis structure');
             analysis = {
                 keyPoints: ['No analysis available'],
                 sentiment: 'neutral',
@@ -110,12 +122,18 @@ export class AIService {
         }
         
         const prompt = this.buildResponsePrompt(emailData, analysis, config);
+        console.log('[AIService] Built response prompt:', prompt);
         
         try {
+            console.log('[AIService] Calling AI for response generation...');
             const response = await this.callAI(prompt, config, 'response');
-            return this.parseResponseResult(response);
+            console.log('[AIService] Raw response generation result:', response);
+            
+            const parsed = this.parseResponseResult(response);
+            console.log('[AIService] Parsed response result:', parsed);
+            return parsed;
         } catch (error) {
-            console.error('Response generation failed:', error);
+            console.error('[AIService] Response generation failed:', error);
             throw new Error('Failed to generate response: ' + error.message);
         }
     }
@@ -276,26 +294,37 @@ Please provide the refined email response text only.`;
      * @returns {Promise<string>} AI response text
      */
     async callAI(prompt, config, type) {
+        console.log(`[AIService] Starting AI call for type: ${type}`);
+        console.log('[AIService] Prompt:', prompt);
+        console.log('[AIService] Config:', config);
+        
         const service = config.service || 'openai';
+        console.log(`[AIService] Using service: ${service}`);
 
         if (service === 'custom') {
+            console.log('[AIService] Calling custom endpoint...');
             return this.callCustomEndpoint(prompt, config);
         }
 
         const serviceConfig = this.supportedServices[service];
         if (!serviceConfig) {
+            console.error(`[AIService] Unsupported AI service: ${service}`);
             throw new Error(`Unsupported AI service: ${service}`);
         }
+        console.log('[AIService] Service config:', serviceConfig);
 
         let endpoint = serviceConfig.endpoint;
         if (service === 'azure' && config.endpointUrl) {
             endpoint = config.endpointUrl;
+            console.log('[AIService] Using Azure custom endpoint:', endpoint);
         }
         if (service === 'ollama' && config.baseUrl) {
             // Always use /api/chat or /api/generate, not the base URL
             const base = config.baseUrl.replace(/\/$/, '');
             endpoint = `${base}/api/chat`;
+            console.log('[AIService] Using Ollama endpoint:', endpoint);
         }
+        console.log('[AIService] Final endpoint:', endpoint);
 
         let requestBody;
         let headers;
@@ -307,39 +336,51 @@ Please provide the refined email response text only.`;
                 stream: false
             };
             headers = { 'Content-Type': 'application/json' };
+            console.log('[AIService] Built Ollama request body:', requestBody);
         } else {
             requestBody = this.buildRequestBody(prompt, service, config);
             headers = this.buildHeaders(service, config);
+            console.log('[AIService] Built request body:', requestBody);
         }
+        console.log('[AIService] Request headers:', headers);
 
         // Debug: Log POST request body to console
-        console.log('[Ollama POST] Endpoint:', endpoint);
-        console.log('[Ollama POST] Request Body:', requestBody);
+        console.log('[AIService] Making API call to endpoint:', endpoint);
+        console.log('[AIService] Request Body:', requestBody);
         let response = await fetch(endpoint, {
             method: 'POST',
             headers: headers,
             body: JSON.stringify(requestBody)
         });
+        console.log(`[AIService] Got response with status: ${response.status} ${response.statusText}`);
 
         // Fallback to /api/generate if /api/chat fails with 405
         if (service === 'ollama' && response.status === 405) {
             const base = config.baseUrl.replace(/\/$/, '');
             const fallbackEndpoint = `${base}/api/generate`;
-            console.warn('[Ollama Fallback] Retrying with /api/generate:', fallbackEndpoint);
+            console.warn('[AIService] Ollama /api/chat failed with 405, retrying with /api/generate:', fallbackEndpoint);
             response = await fetch(fallbackEndpoint, {
                 method: 'POST',
                 headers: headers,
                 body: JSON.stringify(requestBody)
             });
+            console.log(`[AIService] Fallback response status: ${response.status} ${response.statusText}`);
         }
 
         if (!response.ok) {
             const errorText = await response.text();
+            console.error(`[AIService] API request failed: ${response.status} ${response.statusText}`);
+            console.error('[AIService] Error response:', errorText);
             throw new Error(`API request failed: ${response.status} ${response.statusText} - ${errorText}`);
         }
 
+        console.log('[AIService] Response OK, parsing JSON...');
         const data = await response.json();
-        return this.extractResponseText(data, service);
+        console.log('[AIService] Response data:', data);
+        
+        const extractedText = this.extractResponseText(data, service);
+        console.log('[AIService] Extracted response text:', extractedText);
+        return extractedText;
     }
 
     /**

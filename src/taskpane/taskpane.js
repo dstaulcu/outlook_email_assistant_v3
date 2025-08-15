@@ -106,6 +106,9 @@ class TaskpaneApp {
             // Setup accessibility
             this.accessibilityManager.initialize();
             
+            // Initialize Splunk telemetry if enabled
+            await this.initializeTelemetry();
+            
             // Load current email
             await this.loadCurrentEmail();
             
@@ -116,7 +119,8 @@ class TaskpaneApp {
             // Log session start
             this.logger.logEvent('session_start', {
                 timestamp: new Date().toISOString(),
-                version: '1.0.0'
+                version: '1.0.0',
+                host: Office.context.host
             });
             
         } catch (error) {
@@ -135,6 +139,25 @@ class TaskpaneApp {
                 }
             });
         });
+    }
+
+    async initializeTelemetry() {
+        console.log('[TaskpaneApp] Initializing telemetry...');
+        
+        try {
+            // Wait for logger telemetry config to load
+            await this.logger.initializeTelemetryConfig();
+            
+            // Start Splunk auto-flush if enabled
+            if (this.logger.telemetryConfig?.telemetry?.enabled && 
+                this.logger.telemetryConfig.telemetry.provider === 'splunk_hec') {
+                this.logger.startSplunkAutoFlush();
+                console.log('[TaskpaneApp] Splunk telemetry enabled and auto-flush started');
+            }
+            
+        } catch (error) {
+            console.error('[TaskpaneApp] Failed to initialize telemetry:', error);
+        }
     }
 
     setupUI() {
@@ -277,23 +300,46 @@ class TaskpaneApp {
     }
 
     displayEmailSummary(email) {
+        console.log('[TaskpaneApp] Displaying email summary for:', email);
+        
         // Only update the fields we're actually showing
         const subjectElement = document.getElementById('email-subject');
         if (subjectElement) {
             subjectElement.textContent = email.subject || 'No Subject';
         }
         
-        // Classification display logic
-        let classification = email.classification;
-        let classificationText;
-        if (!classification || classification.toLowerCase() === "unclassified") {
-            classificationText = "This email appears to be safe for AI processing.";
-        } else {
-            classificationText = classification;
+        // Enhanced classification display logic using ClassificationDetector
+        let classificationResult = null;
+        let classificationText = 'UNCLASSIFIED';
+        let classificationColor = 'green';
+        
+        if (email.body) {
+            classificationResult = this.classificationDetector.detectClassification(email.body);
+            console.log('[TaskpaneApp] Classification result:', classificationResult);
+            
+            if (classificationResult.detected) {
+                classificationText = classificationResult.text;
+                classificationColor = classificationResult.color;
+                
+                // Show detailed classification info if markings were found
+                if (classificationResult.markings && classificationResult.markings.length > 0) {
+                    classificationText += ` (${classificationResult.markings.length} marking${classificationResult.markings.length > 1 ? 's' : ''} found)`;
+                }
+            } else {
+                classificationText = 'UNCLASSIFIED - Safe for AI processing';
+            }
         }
+        
         const classificationElement = document.getElementById("email-classification");
         if (classificationElement) {
             classificationElement.textContent = classificationText;
+            classificationElement.className = `classification classification-${classificationColor}`;
+            console.log('[TaskpaneApp] Set classification display:', classificationText, classificationColor);
+        }
+        
+        // Store classification result for later use
+        if (classificationResult) {
+            email.classificationResult = classificationResult;
         }
         
         // Commented out fields for debugging purposes
@@ -308,14 +354,72 @@ class TaskpaneApp {
             return;
         }
 
-        // Check for classification
+        // Check for classification compatibility with selected provider
         const classification = this.classificationDetector.detectClassification(this.currentEmail.body);
+        console.log('[TaskpaneApp] Email classification check:', classification);
+        
+        // Get current AI provider settings
+        const currentSettings = await this.settingsManager.getSettings();
+        const selectedService = currentSettings['model-service'];
+        
+        // Check if provider supports this classification level
+        const isCompatible = await this.checkProviderClassificationCompatibility(selectedService, classification);
+        
+        if (!isCompatible) {
+            this.showProviderClassificationWarning(selectedService, classification);
+            return;
+        }
+        
+        // Legacy check for SECRET or above
         if (classification.level > 2) { // SECRET or above
             this.showClassificationWarning(classification);
             return;
         }
 
         await this.performAnalysis();
+    }
+
+    async checkProviderClassificationCompatibility(serviceProvider, classification) {
+        console.log('[TaskpaneApp] Checking provider compatibility:', serviceProvider, classification);
+        
+        try {
+            const providersConfig = await this.fetchDefaultProvidersConfig();
+            const providerInfo = providersConfig[serviceProvider];
+            
+            if (!providerInfo) {
+                console.warn('[TaskpaneApp] No provider configuration found for:', serviceProvider);
+                return true; // Allow if no config found
+            }
+            
+            if (providerInfo.maxClassificationLevel !== undefined) {
+                const compatible = classification.level <= providerInfo.maxClassificationLevel;
+                console.log(`[TaskpaneApp] Classification compatibility: ${classification.text} (level ${classification.level}) vs ${serviceProvider} (max level ${providerInfo.maxClassificationLevel}) = ${compatible}`);
+                return compatible;
+            }
+            
+            return true; // Allow if no classification restrictions
+        } catch (error) {
+            console.error('[TaskpaneApp] Error checking provider compatibility:', error);
+            return true; // Allow on error
+        }
+    }
+
+    showProviderClassificationWarning(provider, classification) {
+        const providersConfig = this.defaultProvidersConfig;
+        const providerInfo = providersConfig[provider];
+        const providerNote = providerInfo?.classificationNote || 'Classification restrictions apply';
+        
+        const message = `The selected AI provider "${provider}" does not support ${classification.text} classified content.\n\n${providerNote}\n\nPlease select a different provider or use unclassified content.`;
+        
+        this.uiController.showError(message);
+        
+        // Log the incompatibility
+        this.logger.logEvent('classification_incompatible', {
+            provider: provider,
+            classification: classification.text,
+            classificationLevel: classification.level,
+            maxSupportedLevel: providerInfo?.maxClassificationLevel
+        });
     }
 
     showClassificationWarning(classification) {
@@ -361,6 +465,10 @@ class TaskpaneApp {
             // Get AI configuration
             const config = this.getAIConfiguration();
             
+            // Get classification information for telemetry
+            const classificationResult = this.currentEmail.classificationResult || 
+                this.classificationDetector.detectClassification(this.currentEmail.body);
+            
             // Perform analysis
             this.currentAnalysis = await this.aiService.analyzeEmail(this.currentEmail, config);
             
@@ -368,12 +476,20 @@ class TaskpaneApp {
             this.displayAnalysis(this.currentAnalysis);
             this.showResponseSection();
             
-            // Log successful analysis
+            // Log successful analysis with enhanced telemetry
             this.logger.logEvent('email_analyzed', {
                 model_service: config.service,
                 model_name: config.model,
                 email_length: this.currentEmail.bodyLength,
-                recipients_count: this.currentEmail.recipients.split(',').length
+                recipients_count: this.currentEmail.recipients.split(',').length,
+                classification: classificationResult.text,
+                classification_level: classificationResult.level,
+                classification_detected: classificationResult.detected,
+                has_markings: classificationResult.markings ? classificationResult.markings.length > 0 : false,
+                analysis_success: true,
+                performance_metrics: {
+                    start_time: Date.now()
+                }
             });
             
             this.uiController.showStatus('Email analysis completed successfully.');

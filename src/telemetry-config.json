@@ -1,0 +1,27 @@
+{
+  "telemetry": {
+    "enabled": true,
+    "provider": "splunk_hec",
+    "splunk": {
+      "hecEndpoint": "https://127.0.0.1:8088/services/collector",
+      "hecToken": "520fe85b-68f1-4a82-9131-33d9e5a5cddd",
+      "index": "main",
+      "source": "outlook_addon",
+      "sourcetype": "json:outlook_email_assistant",
+      "validateCertificate": true,
+      "timeout": 30000,
+      "retryAttempts": 3,
+      "batchSize": 10,
+      "flushInterval": 60000
+    }
+  },
+  "environment": {
+    "name": "development",
+    "version": "1.0.0"
+  },
+  "metadata": {
+    "application": "Outlook Email Assistant",
+    "component": "TaskPane",
+    "lastUpdated": "2025-08-12"
+  }
+}

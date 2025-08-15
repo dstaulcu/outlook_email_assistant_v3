@@ -584,6 +584,20 @@ else {
     Write-Status "✗ src/manifest.xml not found!" 'Red'
 }
 
+# copy src\telemetry-config.json to .\public
+$srcTelemetryConfig = Join-Path $srcDir 'telemetry-config.json'
+$publicTelemetryConfig = Join-Path $publicDir 'telemetry-config.json'
+if ($DryRun) {
+    Write-Status "[DryRun] Would copy telemetry-config.json to public/" 'Yellow'
+}
+elseif (Test-Path $srcTelemetryConfig) {
+    Copy-Item $srcTelemetryConfig $publicTelemetryConfig -Force
+    Write-Status "✓ Copied telemetry-config.json to public/" 'Green'
+}
+else {
+    Write-Status "⚠️ src/telemetry-config.json not found - telemetry configuration will use defaults" 'Yellow'
+}
+
 # copy src\online to .\public\online
 $srcOnline = Join-Path $srcDir 'online'
 $publicOnline = Join-Path $publicDir 'online'

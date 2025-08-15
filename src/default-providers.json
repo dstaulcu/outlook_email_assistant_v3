@@ -1,10 +1,16 @@
 {
   "ollama": {
     "label": "Ollama (Local)",
-    "baseUrl": "http://localhost:11434"
+    "baseUrl": "http://localhost:11434",
+    "supportedClassifications": ["UNCLASSIFIED", "CONFIDENTIAL"],
+    "maxClassificationLevel": 1,
+    "classificationNote": "Local processing - suitable for CONFIDENTIAL and below"
   },
   "openai": {
     "label": "OpenAI",
-    "baseUrl": "https://api.openai.com/v1"
-  }  
+    "baseUrl": "https://api.openai.com/v1",
+    "supportedClassifications": ["UNCLASSIFIED"],
+    "maxClassificationLevel": 0,
+    "classificationNote": "Cloud service - UNCLASSIFIED content only"
+  }
 }

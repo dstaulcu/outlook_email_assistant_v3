@@ -1,49 +1,84 @@
 /**
  * Logger Service
- * Handles logging events to Windows Application Log using PowerShell
+ * Handles console logging (always enabled) and Splunk HEC telemetry (configurable)
  */
 
 export class Logger {
     constructor() {
         this.eventSource = 'PromptEmail';
-        this.logName = 'Application';
         this.isEnabled = true;
-        this.logQueue = [];
-        this.maxQueueSize = 100;
+        this.telemetryConfig = null;
+        this.splunkQueue = [];
+        this.splunkFlushInterval = null;
+        this.splunkRetryCount = 0;
+        this.maxRetries = 3;
+        this.splunkConnectionError = false;
+        
+        // Initialize telemetry configuration
+        this.initializeTelemetryConfig();
     }
 
     /**
-     * Logs an event to the Windows Application Log
+     * Initialize telemetry configuration
+     */
+    async initializeTelemetryConfig() {
+        try {
+            console.log('[Logger] Loading telemetry configuration...');
+            const response = await fetch('/telemetry-config.json');
+            if (response.ok) {
+                this.telemetryConfig = await response.json();
+                console.log('[Logger] Telemetry configuration loaded:', this.telemetryConfig);
+            } else {
+                console.warn('[Logger] Could not load telemetry configuration, using defaults');
+                this.telemetryConfig = this.getDefaultTelemetryConfig();
+            }
+        } catch (error) {
+            console.error('[Logger] Failed to load telemetry configuration:', error);
+            this.telemetryConfig = this.getDefaultTelemetryConfig();
+        }
+    }
+
+    /**
+     * Get default telemetry configuration
+     */
+    getDefaultTelemetryConfig() {
+        return {
+            telemetry: {
+                enabled: false,
+                provider: "local"
+            },
+            environment: {
+                name: "unknown",
+                version: "1.0.0"
+            }
+        };
+    }
+
+    /**
+     * Logs an event to console (always) and Splunk HEC (if enabled)
      * @param {string} eventType - Type of event (e.g., 'session_start', 'email_analyzed')
      * @param {Object} data - Event data object
      * @param {string} level - Log level ('Information', 'Warning', 'Error')
      */
     async logEvent(eventType, data = {}, level = 'Information') {
         if (!this.isEnabled) {
-            console.log('Logging disabled:', eventType, data);
+            console.log('[Logger] Logging disabled:', eventType, data);
             return;
         }
 
         try {
             const logEntry = this.createLogEntry(eventType, data);
             
-            // Add to queue for batch processing
-            this.logQueue.push({
-                entry: logEntry,
-                level: level,
-                timestamp: new Date().toISOString()
-            });
-
-            // Process queue if it's getting full
-            if (this.logQueue.length >= this.maxQueueSize) {
-                await this.flushQueue();
-            }
-
-            // For console development
+            // Always log to console for development/debugging
             console.log(`[${level}] ${eventType}:`, logEntry);
 
+            // Add to Splunk queue if telemetry is enabled
+            if (this.telemetryConfig?.telemetry?.enabled && this.telemetryConfig.telemetry.provider === 'splunk_hec') {
+                await this.logToSplunk(eventType, logEntry, level);
+            }
+
         } catch (error) {
-            console.error('Failed to log event:', error);
+            console.error('[Logger] Failed to log event:', error);
         }
     }
 
@@ -109,76 +144,139 @@ export class Logger {
     }
 
     /**
-     * Writes log entry to Windows Application Log via PowerShell
-     * @param {Object} logEntry - Log entry to write
+     * Logs an event to Splunk HEC
+     * @param {string} eventType - Event type
+     * @param {Object} logEntry - Log entry data
      * @param {string} level - Log level
      */
-    async writeToWindowsLog(logEntry, level) {
+    async logToSplunk(eventType, logEntry, level) {
         try {
-            const jsonMessage = JSON.stringify(logEntry);
-            
-            // PowerShell command to write to Application Log
-            const psCommand = `
-                $eventSource = "${this.eventSource}"
-                $logName = "${this.logName}"
-                $eventLevel = "${level}"
-                $message = @'
-${jsonMessage}
-'@
+            if (!this.telemetryConfig?.telemetry?.splunk) {
+                console.warn('[Logger] Splunk configuration not available');
+                return;
+            }
 
-                # Check if event source exists, create if not
-                if (-not [System.Diagnostics.EventLog]::SourceExists($eventSource)) {
-                    try {
-                        [System.Diagnostics.EventLog]::CreateEventSource($eventSource, $logName)
-                        Start-Sleep -Seconds 1
-                    } catch {
-                        Write-Host "Warning: Could not create event source. May need administrator privileges."
-                        return
-                    }
+            const splunkConfig = this.telemetryConfig.telemetry.splunk;
+            const splunkEvent = {
+                time: Math.floor(Date.now() / 1000), // Unix timestamp
+                host: window.location.hostname,
+                index: splunkConfig.index,
+                source: splunkConfig.source,
+                sourcetype: splunkConfig.sourcetype,
+                event: {
+                    ...logEntry,
+                    level: level,
+                    environment: this.telemetryConfig.environment
                 }
+            };
 
-                # Write event
-                try {
-                    $eventType = switch($eventLevel) {
-                        "Information" { [System.Diagnostics.EventLogEntryType]::Information }
-                        "Warning" { [System.Diagnostics.EventLogEntryType]::Warning }
-                        "Error" { [System.Diagnostics.EventLogEntryType]::Error }
-                        default { [System.Diagnostics.EventLogEntryType]::Information }
-                    }
-                    
-                    [System.Diagnostics.EventLog]::WriteEntry($eventSource, $message, $eventType, 1001)
-                    Write-Host "Event logged successfully"
-                } catch {
-                    Write-Host "Error writing to event log: $_"
-                }
-            `;
+            console.log('[Logger] Preparing Splunk event:', splunkEvent);
 
-            // Execute PowerShell command (this would typically be done via a bridge in a real implementation)
-            if (typeof window !== 'undefined' && window.chrome?.webview) {
-                // WebView2 bridge for PowerShell execution
-                await window.chrome.webview.postMessage({
-                    type: 'executePowerShell',
-                    script: psCommand
-                });
-            } else {
-                // Fallback: log to console in development
-                console.log('PowerShell Log Entry:', jsonMessage);
+            // Add to Splunk queue for batch processing
+            this.splunkQueue.push(splunkEvent);
+
+            // Process Splunk queue if it's getting full or on timer
+            if (this.splunkQueue.length >= (splunkConfig.batchSize || 10)) {
+                await this.flushSplunkQueue();
             }
 
         } catch (error) {
-            console.error('Failed to write to Windows log:', error);
+            console.error('[Logger] Failed to log to Splunk:', error);
         }
     }
 
     /**
-     * Flushes the log queue by writing all entries
+     * Flush Splunk queue to HEC endpoint
      */
-    async flushQueue() {
-        const entriesToProcess = [...this.logQueue];
-        this.logQueue = [];
+    async flushSplunkQueue() {
+        if (this.splunkQueue.length === 0) return;
 
-        for (const item of entriesToProcess) {
-            await this.writeToWindowsLog(item.entry, item.level);
+        const events = [...this.splunkQueue];
+        this.splunkQueue = [];
+
+        try {
+            const splunkConfig = this.telemetryConfig.telemetry.splunk;
+
+            console.log(`[Logger] Flushing ${events.length} events to Splunk HEC`);
+
+            const response = await fetch(splunkConfig.hecEndpoint, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Splunk ${splunkConfig.hecToken}`,
+                    'Content-Type': 'application/json'
+                },
+                body: events.map(event => JSON.stringify(event)).join('\n')
+            });
+
+            if (response.ok) {
+                console.log('[Logger] Successfully sent events to Splunk HEC');
+                
+                // Reset connection error state on successful connection
+                this.splunkConnectionError = false;
+                this.splunkRetryCount = 0;
+                
+                // Log successful telemetry transmission
+                const result = await response.json();
+                console.log('[Logger] Splunk HEC response:', result);
+            } else {
+                console.error('[Logger] Failed to send events to Splunk HEC:', response.status, response.statusText);
+                
+                // Re-queue events for retry (with limit)
+                if (events.length < 100) {
+                    this.splunkQueue.unshift(...events);
+                }
+            }
+
+        } catch (error) {
+            // Handle connection errors more gracefully
+            if (error.message.includes('fetch') || error.message.includes('ERR_CONNECTION_REFUSED')) {
+                if (!this.splunkConnectionError) {
+                    console.warn('[Logger] Splunk HEC connection unavailable, events will be queued');
+                    this.splunkConnectionError = true;
+                }
+                
+                // Re-queue events for retry (with limit)
+                if (events.length < 100) { // Prevent infinite queue growth
+                    this.splunkQueue.unshift(...events);
+                    this.splunkRetryCount++;
+                    
+                    // If too many retries, clear the queue to prevent memory issues
+                    if (this.splunkRetryCount > this.maxRetries) {
+                        console.warn('[Logger] Max Splunk retry attempts reached, clearing queue');
+                        this.splunkQueue = [];
+                        this.splunkRetryCount = 0;
+                    }
+                }
+            } else {
+                console.error('[Logger] Error flushing Splunk queue:', error);
+            }
+        }
+    }
+
+    /**
+     * Start automatic Splunk queue flushing
+     */
+    startSplunkAutoFlush() {
+        if (this.splunkFlushInterval) return;
+
+        const flushInterval = this.telemetryConfig?.telemetry?.splunk?.flushInterval || 60000;
+        this.splunkFlushInterval = setInterval(async () => {
+            if (this.splunkQueue.length > 0) {
+                await this.flushSplunkQueue();
+            }
+        }, flushInterval);
+
+        console.log(`[Logger] Started Splunk auto-flush with ${flushInterval}ms interval`);
+    }
+
+    /**
+     * Stop automatic Splunk queue flushing
+     */
+    stopSplunkAutoFlush() {
+        if (this.splunkFlushInterval) {
+            clearInterval(this.splunkFlushInterval);
+            this.splunkFlushInterval = null;
+            console.log('[Logger] Stopped Splunk auto-flush');
         }
     }
 
@@ -318,11 +416,11 @@ ${jsonMessage}
     }
 
     /**
-     * Forces immediate flush of all queued log entries
+     * Forces immediate flush of Splunk queue
      */
     async forceFlush() {
-        if (this.logQueue.length > 0) {
-            await this.flushQueue();
+        if (this.splunkQueue.length > 0) {
+            await this.flushSplunkQueue();
         }
     }
 }
