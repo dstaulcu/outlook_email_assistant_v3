@@ -32,7 +32,34 @@ function Update-EmbeddedUrls {
         # Pattern: (condition) + "//domain.com/path"  
         '(?i)\([^)]+\)\s*\+\s*[''"]//([^''"]+)[''"]'
     )
+
+    <# Definately needed in airgapped network
+        'https://ajax.aspnetcdn.com',
+        'https://appsforoffice.microsoft.com',        
+        'https://raw.githubusercontent.com',        
+    #>
     
+    # Whitelist of URLs to skip warnings and string substitution
+    $urlWhitelist = @(
+        # CDN and Microsoft/Office URLs
+        'https://alcdn.msauth.net',
+        'https://alcdn.msauth.net/browser-1p/2.28.1/js/msal-browser-1p.min.js',
+        'http://schemas.microsoft.com/office/appforoffice/1.1',
+        'http://schemas.microsoft.com/office/officeappbasictypes/1.0',
+        'http://schemas.microsoft.com/office/mailappversionoverrides/1.0',
+        'http://www.mozilla.org/newlayout/xml/parsererror.xml',
+        'https://github.com/OfficeDev/office-js/blob/release/LICENSE.md',
+        'https://us.pipe.aria.microsoft.com/Collector/3.0/',
+        'https://de.pipe.aria.microsoft.com/Collector/3.0/',
+        'https://jp.pipe.aria.microsoft.com/Collector/3.0/',
+        'https://au.pipe.aria.microsoft.com/Collector/3.0/',
+        'https://eu.pipe.aria.microsoft.com/Collector/3.0/',
+        'https://pf.pipe.aria.microsoft.com/Collector/3.0',
+        'https://tb.pipe.aria.microsoft.com/Collector/3.0',
+        'https://browser.pipe.aria.microsoft.com/Collector/3.0/'
+        # Add more as needed
+    )
+
     $files = Get-ChildItem -Path $RootPath -Recurse -File
     $urlResults = @()
     $concatenationResults = @()
@@ -76,6 +103,19 @@ function Update-EmbeddedUrls {
 
     # Process direct URLs (existing logic)
     foreach ($url in $urlResults) {
+        # Check whitelist (skip if matches any whitelist entry)
+        $isWhitelisted = $false
+        foreach ($white in $urlWhitelist) {
+            if ($url.URL -like "$white*") {
+                $isWhitelisted = $true
+                break
+            }
+        }
+        if ($isWhitelisted) {
+            Write-Host "[Whitelist] Skipping URL: $($url.URL) in file: $($url.File)"
+            continue
+        }
+
         # Check if any name is contained in the URL
         $fileNames = $files | Select-Object -ExpandProperty name
         $otherStrings = "(outlook-email-assistant)"
@@ -90,7 +130,7 @@ function Update-EmbeddedUrls {
         else {
             $originalUri = [System.Uri]$url.URL
             $scheme = $originalUri.Scheme
-        }        
+        }
 
         if ($matchFound) {
             $do_replacement = $true
@@ -584,18 +624,18 @@ else {
     Write-Status "✗ src/manifest.xml not found!" 'Red'
 }
 
-# copy src\telemetry-config.json to .\public
-$srcTelemetryConfig = Join-Path $srcDir 'telemetry-config.json'
-$publicTelemetryConfig = Join-Path $publicDir 'telemetry-config.json'
+# copy src\config\telemetry.json to .\public\config
+$srcTelemetryConfig = Join-Path $srcDir 'config\telemetry.json'
+$publicTelemetryConfig = Join-Path $publicDir 'config\telemetry.json'
 if ($DryRun) {
-    Write-Status "[DryRun] Would copy telemetry-config.json to public/" 'Yellow'
+    Write-Status "[DryRun] Would copy telemetry.json to public/config/" 'Yellow'
 }
 elseif (Test-Path $srcTelemetryConfig) {
     Copy-Item $srcTelemetryConfig $publicTelemetryConfig -Force
-    Write-Status "✓ Copied telemetry-config.json to public/" 'Green'
+    Write-Status "✓ Copied telemetry.json to public/config/" 'Green'
 }
 else {
-    Write-Status "⚠️ src/telemetry-config.json not found - telemetry configuration will use defaults" 'Yellow'
+        Write-Status "⚠️ src/config/telemetry.json not found - telemetry configuration will use defaults" 'Yellow'
 }
 
 # copy src\online to .\public\online

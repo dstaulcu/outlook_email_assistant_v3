@@ -633,7 +633,7 @@ section h3 {
 }
 
 .response-text {
-    white-space: pre-wrap;
+    white-space: pre-line;
     line-height: 1.6;
     font-size: var(--font-size-sm);
 }
@@ -930,4 +930,52 @@ section h3 {
         background: white;
         color: black;
     }
+}
+
+/* === Due Dates Styling === */
+.due-dates-header {
+    color: var(--color-warning);
+    border-bottom: 2px solid var(--color-warning);
+    padding-bottom: var(--spacing-xs);
+    margin-bottom: var(--spacing-md);
+}
+
+.due-dates-list {
+    background: #fff8e1;
+    border: 1px solid #ffcc02;
+    border-radius: var(--border-radius);
+    padding: var(--spacing-md);
+    margin-bottom: var(--spacing-lg);
+}
+
+.due-date-item {
+    padding: var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+    border-left: 3px solid var(--color-warning);
+    background: #ffffff;
+    border-radius: var(--border-radius);
+}
+
+.due-date-item:last-child {
+    margin-bottom: 0;
+}
+
+.due-date-item.urgent-due-date {
+    border-left-color: var(--color-error);
+    background: #ffebee;
+}
+
+.due-date-info {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.urgent-badge {
+    background: var(--color-error);
+    color: var(--text-inverse);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: bold;
+    margin-left: var(--spacing-sm);
 }

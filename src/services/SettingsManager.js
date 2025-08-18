@@ -33,6 +33,10 @@ export class SettingsManager {
         
         this.settings = { ...this.defaultSettings };
         this.changeListeners = [];
+        
+        // Add unique instance ID for debugging
+        this.instanceId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+        console.debug('SettingsManager instance created:', this.instanceId);
     }
 
     /**
@@ -40,42 +44,42 @@ export class SettingsManager {
      * @returns {Promise<Object>} Loaded settings
      */
     async loadSettings() {
-        console.log('[SettingsManager] Starting settings load process...');
+        console.debug('Starting settings load process...');
         try {
-            console.log('[SettingsManager] Attempting to load from Office storage...');
+            console.debug('Attempting to load from Office storage...');
             // Try Office.js RoamingSettings first
             const officeSettings = await this.loadFromOfficeStorage();
             if (officeSettings) {
-                console.log('[SettingsManager] Successfully loaded from Office storage:', officeSettings);
+                console.debug('Successfully loaded from Office storage:', officeSettings);
                 this.settings = { ...this.defaultSettings, ...officeSettings };
-                console.log('[SettingsManager] Merged settings with defaults:', this.settings);
+                console.debug('Merged settings with defaults:', this.settings);
                 return this.settings;
             }
-            console.log('[SettingsManager] No Office storage settings found, trying localStorage...');
+            console.warn('No Office storage settings found, trying localStorage...');
 
             // Fallback to localStorage
             const localSettings = this.loadFromLocalStorage();
             if (localSettings) {
-                console.log('[SettingsManager] Successfully loaded from localStorage:', localSettings);
+                console.debug('Successfully loaded from localStorage:', localSettings);
                 this.settings = { ...this.defaultSettings, ...localSettings };
-                console.log('[SettingsManager] Merged settings with defaults:', this.settings);
+                console.debug('Merged settings with defaults:', this.settings);
                 return this.settings;
             }
-            console.log('[SettingsManager] No localStorage settings found, using defaults...');
+            console.debug('No localStorage settings found, using defaults...');
 
             // No stored settings found, use defaults
             this.settings = { ...this.defaultSettings };
-            console.log('[SettingsManager] Using default settings:', this.settings);
+            console.debug('Using default settings:', this.settings);
             await this.saveSettings(this.settings);
-            console.log('[SettingsManager] Default settings saved successfully');
+            console.debug('Default settings saved successfully');
             
             return this.settings;
 
         } catch (error) {
-            console.error('[SettingsManager] Failed to load settings:', error);
-            console.log('[SettingsManager] Falling back to default settings due to error');
+            console.error('Failed to load settings:', error);
+            console.debug('Falling back to default settings due to error');
             this.settings = { ...this.defaultSettings };
-            console.log('[SettingsManager] Using default settings after error:', this.settings);
+            console.debug('Using default settings after error:', this.settings);
             return this.settings;
         }
     }
@@ -86,39 +90,39 @@ export class SettingsManager {
      * @returns {Promise<boolean>} Success status
      */
     async saveSettings(newSettings = null) {
-        console.log('[SettingsManager] Starting settings save process...');
-        console.log('[SettingsManager] Settings to save:', newSettings || this.settings);
+        console.debug('Starting settings save process...');
+        console.debug('Settings to save:', newSettings || this.settings);
         try {
             const settingsToSave = newSettings || this.settings;
             
             // Update timestamp
             settingsToSave['last-updated'] = new Date().toISOString();
-            console.log('[SettingsManager] Added timestamp:', settingsToSave['last-updated']);
+            console.debug('Added timestamp:', settingsToSave['last-updated']);
             
             // Update internal settings
             this.settings = { ...settingsToSave };
-            console.log('[SettingsManager] Updated internal settings cache');
+            console.debug('Updated internal settings cache');
 
             // Save to Office.js RoamingSettings
-            console.log('[SettingsManager] Attempting to save to Office storage...');
+            console.debug('Attempting to save to Office storage...');
             const officeSaved = await this.saveToOfficeStorage(settingsToSave);
-            console.log(`[SettingsManager] Office storage save result: ${officeSaved ? 'SUCCESS' : 'FAILED'}`);
+            console.debug(`[SettingsManager] Office storage save result: ${officeSaved ? 'SUCCESS' : 'FAILED'}`);
             
             // Also save to localStorage as backup
-            console.log('[SettingsManager] Saving to localStorage as backup...');
+            console.debug('Saving to localStorage as backup...');
             this.saveToLocalStorage(settingsToSave);
-            console.log('[SettingsManager] localStorage backup save completed');
+            console.debug('localStorage backup save completed');
 
             // Notify listeners
-            console.log('[SettingsManager] Notifying change listeners...');
+            console.debug('Notifying change listeners...');
             this.notifyChangeListeners(settingsToSave);
-            console.log(`[SettingsManager] Notified ${this.changeListeners.length} listeners`);
+            console.debug(`[SettingsManager] Notified ${this.changeListeners.length} listeners`);
 
             return officeSaved;
 
         } catch (error) {
-            console.error('[SettingsManager] Failed to save settings:', error);
-            console.log('[SettingsManager] Save operation failed, returning false');
+            console.error('Failed to save settings:', error);
+            console.log('Save operation failed, returning false');
             return false;
         }
     }
@@ -128,31 +132,31 @@ export class SettingsManager {
      * @returns {Promise<Object|null>} Settings object or null
      */
     async loadFromOfficeStorage() {
-        console.log('[SettingsManager] Loading from Office.js RoamingSettings...');
+        console.debug('Loading from Office.js RoamingSettings...');
         return new Promise((resolve) => {
             try {
                 if (typeof Office === 'undefined' || !Office.context?.roamingSettings) {
-                    console.log('[SettingsManager] Office.js or RoamingSettings not available');
+                    console.warn('Office.js or RoamingSettings not available');
                     resolve(null);
                     return;
                 }
 
                 const roamingSettings = Office.context.roamingSettings;
-                console.log('[SettingsManager] RoamingSettings object available');
+                console.debug('RoamingSettings object available');
                 const settingsJson = roamingSettings.get(this.storageKey);
-                console.log('[SettingsManager] Raw settings from Office storage:', settingsJson);
+                console.debug('Raw settings from Office storage:', settingsJson);
                 
                 if (settingsJson) {
                     const settings = JSON.parse(settingsJson);
-                    console.log('[SettingsManager] Parsed Office settings:', settings);
+                    console.debug('Parsed Office settings:', settings);
                     resolve(settings);
                 } else {
-                    console.log('[SettingsManager] No settings found in Office storage');
+                    console.debug('No settings found in Office storage');
                     resolve(null);
                 }
 
             } catch (error) {
-                console.error('[SettingsManager] Failed to load from Office storage:', error);
+                console.error('Failed to load from Office storage:', error);
                 resolve(null);
             }
         });
@@ -164,38 +168,38 @@ export class SettingsManager {
      * @returns {Promise<boolean>} Success status
      */
     async saveToOfficeStorage(settings) {
-        console.log('[SettingsManager] Saving to Office.js RoamingSettings...');
-        console.log('[SettingsManager] Settings to serialize:', settings);
+        console.debug('Saving to Office.js RoamingSettings...');
+        console.debug('Settings to serialize:', settings);
         return new Promise((resolve) => {
             try {
                 if (typeof Office === 'undefined' || !Office.context?.roamingSettings) {
-                    console.log('[SettingsManager] Office.js or RoamingSettings not available for save');
+                    console.warn('Office.js or RoamingSettings not available for save');
                     resolve(false);
                     return;
                 }
 
                 const roamingSettings = Office.context.roamingSettings;
-                console.log('[SettingsManager] RoamingSettings object available for save');
+                console.debug('RoamingSettings object available for save');
                 const settingsJson = JSON.stringify(settings);
-                console.log('[SettingsManager] Serialized settings JSON:', settingsJson);
+                console.debug('Serialized settings JSON:', settingsJson);
                 
                 roamingSettings.set(this.storageKey, settingsJson);
-                console.log('[SettingsManager] Settings data set in RoamingSettings');
+                console.debug('Settings data set in RoamingSettings');
                 
                 // Save settings asynchronously
-                console.log('[SettingsManager] Initiating async save to Office...');
+                console.debug('Initiating async save to Office...');
                 roamingSettings.saveAsync((result) => {
                     if (result.status === Office.AsyncResultStatus.Succeeded) {
-                        console.log('[SettingsManager] Office storage save succeeded');
+                        console.debug('Office storage save succeeded');
                         resolve(true);
                     } else {
-                        console.error('[SettingsManager] Failed to save to Office storage:', result.error);
+                        console.error('Failed to save to Office storage:', result.error);
                         resolve(false);
                     }
                 });
 
             } catch (error) {
-                console.error('[SettingsManager] Error saving to Office storage:', error);
+                console.error('Error saving to Office storage:', error);
                 resolve(false);
             }
         });
@@ -206,26 +210,26 @@ export class SettingsManager {
      * @returns {Object|null} Settings object or null
      */
     loadFromLocalStorage() {
-        console.log('[SettingsManager] Loading from localStorage...');
+        console.debug('Loading from localStorage...');
         try {
             if (typeof localStorage === 'undefined') {
-                console.log('[SettingsManager] localStorage not available');
+                console.warn('localStorage not available');
                 return null;
             }
 
             const settingsJson = localStorage.getItem(this.storageKey);
-            console.log('[SettingsManager] Raw localStorage data:', settingsJson);
+            console.debug('Raw localStorage data:', settingsJson);
             if (settingsJson) {
                 const settings = JSON.parse(settingsJson);
-                console.log('[SettingsManager] Parsed localStorage settings:', settings);
+                console.debug('Parsed localStorage settings:', settings);
                 return settings;
             }
             
-            console.log('[SettingsManager] No settings found in localStorage');
+            console.debug('No settings found in localStorage');
             return null;
 
         } catch (error) {
-            console.error('[SettingsManager] Failed to load from localStorage:', error);
+            console.error('Failed to load from localStorage:', error);
             return null;
         }
     }
@@ -235,21 +239,21 @@ export class SettingsManager {
      * @param {Object} settings - Settings to save
      */
     saveToLocalStorage(settings) {
-        console.log('[SettingsManager] Saving to localStorage...');
-        console.log('[SettingsManager] Settings to save to localStorage:', settings);
+        console.debug('Saving to localStorage...');
+        console.debug('Settings to save to localStorage:', settings);
         try {
             if (typeof localStorage === 'undefined') {
-                console.log('[SettingsManager] localStorage not available for save');
+                console.warn('localStorage not available for save');
                 return;
             }
 
             const settingsJson = JSON.stringify(settings);
-            console.log('[SettingsManager] Serialized localStorage JSON:', settingsJson);
+            console.debug('Serialized localStorage JSON:', settingsJson);
             localStorage.setItem(this.storageKey, settingsJson);
-            console.log('[SettingsManager] localStorage save completed');
+            console.debug('localStorage save completed');
 
         } catch (error) {
-            console.error('[SettingsManager] Failed to save to localStorage:', error);
+            console.error('Failed to save to localStorage:', error);
         }
     }
 
@@ -284,7 +288,7 @@ export class SettingsManager {
      * @returns {Object} All settings
      */
     getSettings() {
-        console.log('[SettingsManager] Getting all settings:', this.settings);
+        console.debug('Getting all settings (instance:', this.instanceId, '):', this.settings);
         return { ...this.settings };
     }
 
@@ -495,3 +499,4 @@ export class SettingsManager {
         }
     }
 }
+

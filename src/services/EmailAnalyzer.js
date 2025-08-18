@@ -30,7 +30,7 @@ export class EmailAnalyzer {
                             if (result.status === Office.AsyncResultStatus.Succeeded) {
                                 resolveFrom(result.value);
                             } else {
-                                console.warn('[EmailAnalyzer] Failed to get from async:', result.error);
+                                console.warn('Failed to get from async:', result.error);
                                 resolveFrom(null);
                             }
                         });
@@ -47,7 +47,7 @@ export class EmailAnalyzer {
                             if (result.status === Office.AsyncResultStatus.Succeeded) {
                                 resolveRecipients({ to: result.value, cc: item.cc, bcc: item.bcc });
                             } else {
-                                console.warn('[EmailAnalyzer] Failed to get recipients async:', result.error);
+                                console.warn('Failed to get recipients async:', result.error);
                                 resolveRecipients({ to: null, cc: item.cc, bcc: item.bcc });
                             }
                         });
@@ -64,7 +64,7 @@ export class EmailAnalyzer {
                             if (result.status === Office.AsyncResultStatus.Succeeded) {
                                 resolveSubject(result.value);
                             } else {
-                                console.warn('[EmailAnalyzer] Failed to get subject async:', result.error);
+                                console.warn('Failed to get subject async:', result.error);
                                 resolveSubject(item.subject);
                             }
                         });
@@ -76,37 +76,37 @@ export class EmailAnalyzer {
 
             const getDateAsync = () => {
                 return new Promise((resolveDate) => {
-                    console.log('[EmailAnalyzer] Getting date - itemType:', item.itemType);
-                    console.log('[EmailAnalyzer] Office context mode:', Office.context.mailbox.item ? 'item available' : 'no item');
                     
-                    // Log all date-related properties we can find
-                    const dateProps = {};
-                    ['dateTimeCreated', 'dateTimeSent', 'dateTimeModified', 'dateTimeReceived'].forEach(prop => {
-                        if (item[prop] !== undefined) {
-                            dateProps[prop] = item[prop];
-                        }
-                    });
-                    console.log('[EmailAnalyzer] Available date properties:', dateProps);
                     
                     // For compose mode, especially replies, we don't want to show a misleading sent date
                     // We'll determine this based on the item properties and context
+                    // More accurate compose mode detection:
                     const isComposeMode = item.itemType === Office.MailboxEnums.ItemType.Message && 
-                                         (item.itemClass === 'IPM.Note' || !item.internetMessageId);
+                                         !item.internetMessageId && 
+                                         !item.dateTimeCreated;
                     
-                    console.log('[EmailAnalyzer] Is compose mode:', isComposeMode);
+                    console.debug('Compose mode detection details:', {
+                        itemType: item.itemType,
+                        itemClass: item.itemClass, 
+                        internetMessageId: !!item.internetMessageId,
+                        dateTimeCreated: !!item.dateTimeCreated,
+                        hasInternetMessageId: !!item.internetMessageId,
+                        hasDateTimeCreated: !!item.dateTimeCreated,
+                        isComposeMode: isComposeMode
+                    });
                     
                     if (isComposeMode) {
                         // In compose mode (including replies), don't show a sent date
-                        console.log('[EmailAnalyzer] In compose mode, using null date');
+                        console.debug('In compose mode, using null date');
                         resolveDate(null);
                     } else if (item.itemType === Office.MailboxEnums.ItemType.Message) {
                         // This should be a received email - use dateTimeCreated
                         const emailDate = item.dateTimeCreated ? new Date(item.dateTimeCreated) : new Date();
-                        console.log('[EmailAnalyzer] Using email date for received message:', emailDate);
+                        console.debug('Using email date for received message:', emailDate);
                         resolveDate(emailDate);
                     } else {
                         // For other item types
-                        console.log('[EmailAnalyzer] Other item type, using null date');
+                        console.debug('Other item type, using null date');
                         resolveDate(null);
                     }
                 });
@@ -128,7 +128,7 @@ export class EmailAnalyzer {
                 getSubjectAsync(),
                 getDateAsync()
             ]).then(([bodyText, fromValue, recipientsValue, subjectValue, dateValue]) => {
-                console.log('[EmailAnalyzer] Async property results:', {
+                console.log('Async property results:', {
                     subject: subjectValue,
                     from: fromValue,
                     recipients: recipientsValue,
@@ -156,7 +156,7 @@ export class EmailAnalyzer {
                     sender: userProfile ? `${userProfile.displayName || 'Unknown'} <${userProfile.emailAddress || 'unknown@domain.com'}>` : 'Unknown Sender'
                 };
 
-                console.log('[EmailAnalyzer] Final processed email data:', emailData);
+                console.log('Final processed email data:', emailData);
                 resolve(emailData);
             }).catch(reject);
         });
@@ -169,7 +169,7 @@ export class EmailAnalyzer {
      * @returns {string} Sender email address
      */
     getFromAddressFromValue(fromValue, item) {
-        console.log('[EmailAnalyzer] Processing from value:', fromValue);
+        console.log('Processing sender email address from async value:', fromValue);
         
         if (fromValue) {
             const displayName = (fromValue.displayName !== undefined) ? String(fromValue.displayName) : 'Unknown';
@@ -199,7 +199,7 @@ export class EmailAnalyzer {
      * @returns {string} Formatted recipients string
      */
     getRecipientsFromValue(recipientsValue) {
-        console.log('[EmailAnalyzer] Processing recipients value:', recipientsValue);
+        console.log('Processing recipients from async values:', recipientsValue);
         
         const recipients = [];
         
@@ -230,11 +230,11 @@ export class EmailAnalyzer {
                 recipients.push('BCC: ' + bccRecipients.join(', '));
             }
         } catch (error) {
-            console.error('[EmailAnalyzer] Error processing recipients value:', error);
+            console.error('Error processing recipients value:', error);
         }
 
         const result = recipients.join('; ') || 'No recipients';
-        console.log('[EmailAnalyzer] Final recipients string:', result);
+        console.log('Final recipients string:', result);
         return result;
     }
 
@@ -244,13 +244,13 @@ export class EmailAnalyzer {
      * @returns {string} Subject string
      */
     getSubjectString(item) {
-        console.log('[EmailAnalyzer] Processing subject:', item.subject, typeof item.subject);
+        console.log('Processing subject:', item.subject, typeof item.subject);
         
         if (!item.subject) return 'No Subject';
         
         // Handle case where subject might be an object
         if (typeof item.subject === 'object') {
-            console.log('[EmailAnalyzer] Subject is object:', item.subject);
+            console.log('Subject is object:', item.subject);
             // If it has a value property, use that
             if (item.subject && item.subject.value !== undefined) return String(item.subject.value);
             // If it has a text property, use that
@@ -265,7 +265,7 @@ export class EmailAnalyzer {
                 const jsonString = JSON.stringify(item.subject);
                 if (jsonString && jsonString !== '{}') return jsonString;
             } catch (e) {
-                console.warn('[EmailAnalyzer] Failed to stringify subject:', e);
+                console.warn('Failed to stringify subject:', e);
             }
             // Otherwise return empty string
             return 'No Subject';
@@ -280,7 +280,7 @@ export class EmailAnalyzer {
      * @returns {string} Sender email address
      */
     getFromAddress(item) {
-        console.log('[EmailAnalyzer] Processing from address:', {
+        console.log('Processing from address:', {
             itemType: item.itemType,
             from: item.from,
             messageType: Office.MailboxEnums.ItemType.Message,
@@ -291,7 +291,7 @@ export class EmailAnalyzer {
         if (item.itemType === Office.MailboxEnums.ItemType.Message) {
             // For received messages in read mode
             if (item.from) {
-                console.log('[EmailAnalyzer] From object:', item.from);
+                console.log('From object:', item.from);
                 const displayName = (item.from.displayName !== undefined) ? String(item.from.displayName) : 'Unknown';
                 const emailAddress = (item.from.emailAddress !== undefined) ? String(item.from.emailAddress) : 'unknown@domain.com';
                 return `${displayName} <${emailAddress}>`;
@@ -299,7 +299,7 @@ export class EmailAnalyzer {
             
             // Fallback: try to get sender from internetMessageId or other properties
             if (item.sender) {
-                console.log('[EmailAnalyzer] Using sender property:', item.sender);
+                console.log('Using sender property:', item.sender);
                 const displayName = (item.sender.displayName !== undefined) ? String(item.sender.displayName) : 'Unknown';
                 const emailAddress = (item.sender.emailAddress !== undefined) ? String(item.sender.emailAddress) : 'unknown@domain.com';
                 return `${displayName} <${emailAddress}>`;
@@ -309,7 +309,7 @@ export class EmailAnalyzer {
         } else {
             // For compose items, return current user
             const userProfile = Office.context.mailbox.userProfile;
-            console.log('[EmailAnalyzer] User profile:', userProfile);
+            console.log('User profile:', userProfile);
             if (userProfile) {
                 const displayName = userProfile.displayName || 'Unknown';
                 const emailAddress = userProfile.emailAddress || 'unknown@domain.com';
@@ -326,7 +326,7 @@ export class EmailAnalyzer {
      * @returns {string} Formatted recipients string
      */
     getRecipients(item) {
-        console.log('[EmailAnalyzer] Processing recipients:', {
+        console.log('Processing recipients:', {
             to: item.to,
             cc: item.cc,
             bcc: item.bcc
@@ -361,11 +361,11 @@ export class EmailAnalyzer {
                 recipients.push('BCC: ' + bccRecipients.join(', '));
             }
         } catch (error) {
-            console.error('[EmailAnalyzer] Error processing recipients:', error);
+            console.error('Error processing recipients:', error);
         }
 
         const result = recipients.join('; ') || 'No recipients';
-        console.log('[EmailAnalyzer] Processed recipients:', result);
+        console.log('Processed recipients:', result);
         return result;
     }
 
@@ -516,3 +516,4 @@ export class EmailAnalyzer {
         return cleaned;
     }
 }
+

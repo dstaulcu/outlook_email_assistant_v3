@@ -5,7 +5,7 @@ This guide covers the complete deployment process for the PromptEmail Outlook Ad
 ## Prerequisites
 
 ### Required Tools
-1. **AWS CLI**: Configured with appropriate S3 and CloudFront permissions
+1. **AWS CLI**: Configured with appropriate S3
 2. **PowerShell**: Version 5.1+ or PowerShell Core 7+
 3. **Node.js**: Version 16+ with npm
 4. **Git**: For version control and deployment tracking
@@ -14,7 +14,6 @@ This guide covers the complete deployment process for the PromptEmail Outlook Ad
 Your AWS user/role needs the following permissions:
 - `s3:CreateBucket`, `s3:ListBucket`, `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`
 - `s3:PutBucketWebsite`, `s3:PutBucketPolicy` 
-- `cloudfront:CreateInvalidation` (optional, for CDN cache clearing)
 
 ## Environment Configuration
 
@@ -99,20 +98,20 @@ Update `src/manifest.xml` with your deployment URLs:
 
 ### 1. Primary Deployment Script
 
-The main deployment script `tools\build_and_deploy.ps1` provides comprehensive build and deployment automation:
+The main deployment script `tools\deploy_web_assets.ps1` provides comprehensive build and deployment automation:
 
 ```powershell
 # Deploy to development environment
-.\tools\build_and_deploy.ps1 -Environment Dev
+.\tools\deploy_web_assets.ps1 -Environment Dev
 
 # Deploy to production with safety checks
-.\tools\build_and_deploy.ps1 -Environment Prd
+.\tools\deploy_web_assets.ps1 -Environment Prd
 
 # Preview deployment without making changes  
-.\tools\build_and_deploy.ps1 -Environment Prd -DryRun
+.\tools\deploy_web_assets.ps1 -Environment Prd -DryRun
 
 # Force deployment (skip validation prompts)
-.\tools\build_and_deploy.ps1 -Environment Prd -Force
+.\tools\deploy_web_assets.ps1 -Environment Prd -Force
 ```
 
 ### 2. Deployment Script Features
@@ -233,12 +232,12 @@ public/
 #### Standard Production Deployment
 ```powershell
 # 1. Perform dry run to preview changes
-.\tools\build_and_deploy.ps1 -Environment Prd -DryRun
+.\tools\deploy_web_assets.ps1 -Environment Prd -DryRun
 
 # 2. Review the proposed changes carefully
 
 # 3. Execute actual deployment
-.\tools\build_and_deploy.ps1 -Environment Prd
+.\tools\deploy_web_assets.ps1 -Environment Prd
 
 # 4. Verify deployment success
 # Check AWS S3 console for uploaded files
@@ -248,7 +247,7 @@ public/
 #### Emergency/Hotfix Deployment
 ```powershell
 # For critical fixes, use force mode to skip prompts
-.\tools\build_and_deploy.ps1 -Environment Prd -Force
+.\tools\deploy_web_assets.ps1 -Environment Prd -Force
 ```
 
 ### 3. Post-Deployment Verification
@@ -376,7 +375,7 @@ Test each supported AI provider:
 
 ```javascript
 // Test script for AI provider validation
-const testProviders = ['openai', 'anthropic', 'ollama', 'azure'];
+const testProviders = ['openai', 'ollama', 'custom'];
 const testMessage = "Analyze this test email content";
 
 testProviders.forEach(async (provider) => {
@@ -442,6 +441,18 @@ aws s3 cp public/index.html s3://your-bucket-name/ --dry-run
 ```
 
 #### Office Add-in Loading Issues
+
+**❗ CRITICAL: Check "Optional Connected Experiences" First**
+
+The most common cause of add-in buttons not appearing is disabled "Optional Connected Experiences":
+
+1. **Location**: File → Options → Trust Center → Trust Center Settings → Privacy Options
+2. **Setting**: "Optional connected experiences" must be **ENABLED** 
+3. **Impact**: When disabled, ALL web-based add-ins fail to load with no error messages
+4. **Solution**: Enable the setting and restart Outlook
+
+**Other Common Add-in Issues:**
+
 1. **Clear Office cache**:
    ```powershell
    Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Microsoft\Office\16.0\Wef"
@@ -451,6 +462,17 @@ aws s3 cp public/index.html s3://your-bucket-name/ --dry-run
    ```powershell
    # Reset Office add-in trust center settings
    reg delete "HKCU\SOFTWARE\Microsoft\Office\16.0\WEF\TrustedCatalogs" /f
+   ```
+
+3. **Verify add-in trust settings**:
+   - File → Options → Trust Center → Trust Center Settings → Add-ins
+   - Uncheck "Require Application Add-ins to be signed by Trusted Publisher"
+   - Uncheck "Disable all Application Add-ins"
+
+4. **Use comprehensive debugging tool**:
+   ```powershell
+   .\tools\outlook_addin_diagnostics.ps1
+   # Select option 6 to check all critical Office settings
    ```
 
 ### 2. Performance Monitoring
@@ -497,7 +519,7 @@ git checkout v1.2.3  # Replace with actual version tag
 
 # 3. Rebuild and redeploy
 npm run build
-.\tools\build_and_deploy.ps1 -Environment Prd -Force
+.\tools\deploy_web_assets.ps1 -Environment Prd -Force
 
 # 4. Verify rollback success
 # Test key functionality in Outlook
@@ -555,7 +577,6 @@ For advanced monitoring, consider S3 access logging:
 
 #### Infrastructure Security  
 - [ ] S3 bucket configured with minimal required permissions
-- [ ] CloudFront HTTPS enforcement (if using CDN)
 - [ ] AWS IAM roles follow principle of least privilege
 - [ ] Regular security credential rotation
 

@@ -52,12 +52,16 @@ module.exports = {
           }
         },
         {
-          from: './src/default-providers.json',
-          to: 'default-providers.json'
+          from: './src/config/ai-providers.json',
+          to: 'config/ai-providers.json'
         },
         {
-          from: './src/default-models.json',
-          to: 'default-models.json'
+          from: './src/config/ai-models.json',
+          to: 'config/ai-models.json'
+        },
+        {
+          from: './src/config/telemetry.json',
+          to: 'config/telemetry.json'
         }
       ]
     })

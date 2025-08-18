@@ -13,16 +13,13 @@ export class AIService {
     extractResponseText(data, service) {
         switch (service) {
             case 'openai':
-            case 'azure':
                 return data.choices?.[0]?.message?.content || '';
             case 'ollama':
                 // Ollama returns response in data.message.content
                 return data.message?.content || data.response || data.text || JSON.stringify(data);
-            case 'anthropic':
-                return data.content?.[0]?.text || '';
             default:
-                // Fallback: try common fields or stringify
-                return data.response || data.text || data.content || JSON.stringify(data);
+                // Fallback: try common OpenAI-compatible fields or stringify
+                return data.choices?.[0]?.message?.content || data.response || data.text || data.content || JSON.stringify(data);
         }
     }
     constructor() {
@@ -38,17 +35,33 @@ export class AIService {
                 apiKey: '', // Ollama does not require apiKey by default
                 maxTokens: 4000
             },
-            anthropic: {
-                endpoint: 'https://api.anthropic.com/v1/messages',
-                model: 'claude-3-sonnet-20240229',
-                maxTokens: 4000
-            },
-            azure: {
-                endpoint: '', // Will be set from configuration
+            custom: {
+                endpoint: '', // Will be set from configuration - supports OnSiteProvider-1, OnSiteProvider-2, etc.
                 model: 'gpt-4',
                 maxTokens: 4000
             }
         };
+    }
+
+    /**
+     * Test the health/connectivity of an AI service
+     * @param {Object} config - AI configuration
+     * @returns {Promise<boolean>} True if service is healthy
+     */
+    async testConnection(config) {
+        try {
+            console.debug('Testing connection for service:', config.service);
+            
+            // Simple ping test with minimal prompt
+            const testPrompt = "Hello, respond with 'OK'";
+            await this.callAI(testPrompt, config, 'health-check');
+            
+            console.debug('Connection test passed');
+            return true;
+        } catch (error) {
+            console.warn('Connection test failed:', error.message);
+            return false;
+        }
     }
 
     /**
@@ -77,23 +90,23 @@ export class AIService {
     }
     
     async analyzeEmail(emailData, config) {
-        console.log('[AIService] Starting email analysis...');
-        console.log('[AIService] Email data:', emailData);
-        console.log('[AIService] Config:', config);
+        console.debug('Starting email analysis...');
+        console.debug('Email data:', emailData);
+        console.debug('AI provider config:', config);
         
         const prompt = this.buildAnalysisPrompt(emailData);
-        console.log('[AIService] Built analysis prompt:', prompt);
+        console.debug('Built analysis prompt:', prompt);
         
         try {
-            console.log('[AIService] Calling AI for analysis...');
+            console.debug('Calling AI for analysis...');
             const response = await this.callAI(prompt, config, 'analysis');
-            console.log('[AIService] Raw analysis response:', response);
+            console.debug('Raw analysis response:', response);
             
             const parsed = this.parseAnalysisResponse(response);
-            console.log('[AIService] Parsed analysis result:', parsed);
+            console.info('Parsed analysis result:', parsed);
             return parsed;
         } catch (error) {
-            console.error('[AIService] Email analysis failed:', error);
+            console.error('Email analysis failed:', error);
             throw new Error('Failed to analyze email: ' + error.message);
         }
     }
@@ -106,14 +119,14 @@ export class AIService {
      * @returns {Promise<Object>} Generated response
      */
     async generateResponse(emailData, analysis, config) {
-        console.log('[AIService] Starting response generation...');
-        console.log('[AIService] Email data:', emailData);
-        console.log('[AIService] Analysis:', analysis);
-        console.log('[AIService] Config:', config);
+        console.debug('Starting response generation...');
+        console.debug('Email data:', emailData);
+        console.debug('Analysis:', analysis);
+        console.debug('Config:', config);
         
         // Ensure analysis is not null - provide default if missing
         if (!analysis) {
-            console.warn('[AIService] Analysis is null, providing default analysis structure');
+            console.warn('Analysis is null, providing default analysis structure');
             analysis = {
                 keyPoints: ['No analysis available'],
                 sentiment: 'neutral',
@@ -122,18 +135,18 @@ export class AIService {
         }
         
         const prompt = this.buildResponsePrompt(emailData, analysis, config);
-        console.log('[AIService] Built response prompt:', prompt);
+        console.debug('Built response prompt:', prompt);
         
         try {
-            console.log('[AIService] Calling AI for response generation...');
+            console.debug('Calling AI for response generation...');
             const response = await this.callAI(prompt, config, 'response');
-            console.log('[AIService] Raw response generation result:', response);
+            console.debug('Raw response generation result:', response);
             
             const parsed = this.parseResponseResult(response);
-            console.log('[AIService] Parsed response result:', parsed);
+            console.info('Parsed response result:', parsed);
             return parsed;
         } catch (error) {
-            console.error('[AIService] Response generation failed:', error);
+            console.error('Response generation failed:', error);
             throw new Error('Failed to generate response: ' + error.message);
         }
     }
@@ -143,10 +156,11 @@ export class AIService {
      * @param {Object} currentResponse - Current response object
      * @param {string} instructions - User refinement instructions
      * @param {Object} config - AI configuration
+     * @param {Object} responseSettings - Response generation settings (length, tone, urgency)
      * @returns {Promise<Object>} Refined response
      */
-    async refineResponse(currentResponse, instructions, config) {
-        const prompt = this.buildRefinementPrompt(currentResponse, instructions);
+    async refineResponse(currentResponse, instructions, config, responseSettings = null) {
+        const prompt = this.buildRefinementPrompt(currentResponse, instructions, responseSettings);
         
         try {
             const response = await this.callAI(prompt, config, 'refinement');
@@ -183,8 +197,9 @@ Please provide a structured analysis including:
 2. **Sentiment**: Describe the overall tone and sentiment of the email
 3. **Intent**: What is the sender trying to accomplish?
 4. **Urgency Level**: Rate the urgency from 1-5 and explain why
-5. **Action Items**: What actions are requested or implied?
-6. **Recommended Response Strategy**: How should this email be approached in a response?
+5. **Due Dates**: Carefully scan for any deadlines, due dates, meetings, deadlines, submission dates, or time-sensitive requirements. Look for phrases like "due by", "deadline", "by [date]", "needs to be completed", "meeting on", "expires", etc. Mark as urgent if within 3 days or if explicitly marked as urgent.
+6. **Action Items**: What actions are requested or implied?
+7. **Recommended Response Strategy**: How should this email be approached in a response?
 
 Format your response as JSON with the following structure:
 {
@@ -193,6 +208,14 @@ Format your response as JSON with the following structure:
     "intent": "what the sender wants to accomplish",
     "urgencyLevel": number,
     "urgencyReason": "explanation of urgency rating",
+    "dueDates": [
+        {
+            "date": "YYYY-MM-DD or 'unspecified'",
+            "time": "HH:MM or 'unspecified'", 
+            "description": "what is due or when the meeting/deadline is",
+            "isUrgent": true/false
+        }
+    ],
     "actions": ["action1", "action2"],
     "responseStrategy": "recommended approach for responding"
 }`;
@@ -265,25 +288,47 @@ Format your response as JSON with the following structure:
     /**
      * Builds the prompt for response refinement
      * @param {Object} currentResponse - Current response
-     * @param {string} instructions - User instructions
+     * @param {string} instructions - User instructions  
+     * @param {Object} responseSettings - Response settings (length, tone, urgency)
      * @returns {string} Refinement prompt
      */
-    buildRefinementPrompt(currentResponse, instructions) {
-        return `Please refine the following email response based on the user's feedback:
+    buildRefinementPrompt(currentResponse, instructions, responseSettings = null) {
+        let settingsInstructions = '';
+        
+        if (responseSettings) {
+            const lengthMap = { '1': 'brief', '2': 'moderate', '3': 'detailed' };
+            const toneMap = { '1': 'formal', '2': 'professional', '3': 'friendly' };
+            const urgencyMap = { '1': 'low urgency', '2': 'normal urgency', '3': 'high urgency' };
+            
+            settingsInstructions = `
+**Response Settings to Apply:**
+- Length: ${lengthMap[responseSettings['response-length']] || 'moderate'}
+- Tone: ${toneMap[responseSettings['response-tone']] || 'professional'}  
+- Urgency: ${urgencyMap[responseSettings['response-urgency']] || 'normal urgency'}`;
+        }
+
+        const userInstructions = instructions.trim() 
+            ? `**User's Refinement Instructions:**\n${instructions}` 
+            : '';
+
+        return `Please refine the following email response based on the settings and feedback provided:
 
 **Current Response:**
 ${currentResponse.text}
-
-**User's Refinement Instructions:**
-${instructions}
+${settingsInstructions}
+${userInstructions}
 
 **Requirements:**
-- Apply the user's feedback while maintaining professionalism
+- Apply the settings and user feedback while maintaining professionalism
+- Adjust length, tone, and urgency level as specified in the settings
 - Keep the overall structure and flow intact unless specifically requested to change
 - Ensure the response remains appropriate for business communication
-- Maintain consistency in tone and style
+- Maintain consistency in the refined tone and style
 
-Please provide the refined email response text only.`;
+**Output Instructions:**
+Return ONLY the refined email content without any prefixes, headers, or labels such as "Refined Response:" or similar. 
+Do not include any introductory text or formatting markers. 
+Provide only the email body text that should be sent.`;
     }
 
     /**
@@ -294,15 +339,15 @@ Please provide the refined email response text only.`;
      * @returns {Promise<string>} AI response text
      */
     async callAI(prompt, config, type) {
-        console.log(`[AIService] Starting AI call for type: ${type}`);
-        console.log('[AIService] Prompt:', prompt);
-        console.log('[AIService] Config:', config);
+        console.debug(`Starting AI call for type: ${type}`);
+        console.debug('Prompt:', prompt);
+        console.debug('Config:', config);
         
         const service = config.service || 'openai';
-        console.log(`[AIService] Using service: ${service}`);
+        console.debug(`Using service: ${service}`);
 
         if (service === 'custom') {
-            console.log('[AIService] Calling custom endpoint...');
+            console.debug('Calling custom endpoint...');
             return this.callCustomEndpoint(prompt, config);
         }
 
@@ -311,20 +356,20 @@ Please provide the refined email response text only.`;
             console.error(`[AIService] Unsupported AI service: ${service}`);
             throw new Error(`Unsupported AI service: ${service}`);
         }
-        console.log('[AIService] Service config:', serviceConfig);
+        console.debug('Service config:', serviceConfig);
 
         let endpoint = serviceConfig.endpoint;
         if (service === 'azure' && config.endpointUrl) {
             endpoint = config.endpointUrl;
-            console.log('[AIService] Using Azure custom endpoint:', endpoint);
+            console.debug('Using Azure custom endpoint:', endpoint);
         }
         if (service === 'ollama' && config.baseUrl) {
             // Always use /api/chat or /api/generate, not the base URL
             const base = config.baseUrl.replace(/\/$/, '');
             endpoint = `${base}/api/chat`;
-            console.log('[AIService] Using Ollama endpoint:', endpoint);
+            console.debug('Using Ollama endpoint:', endpoint);
         }
-        console.log('[AIService] Final endpoint:', endpoint);
+        console.debug('Final endpoint:', endpoint);
 
         let requestBody;
         let headers;
@@ -336,50 +381,50 @@ Please provide the refined email response text only.`;
                 stream: false
             };
             headers = { 'Content-Type': 'application/json' };
-            console.log('[AIService] Built Ollama request body:', requestBody);
+            console.debug('Built Ollama request body:', requestBody);
         } else {
             requestBody = this.buildRequestBody(prompt, service, config);
             headers = this.buildHeaders(service, config);
-            console.log('[AIService] Built request body:', requestBody);
+            console.debug('Built request body:', requestBody);
         }
-        console.log('[AIService] Request headers:', headers);
+        console.debug('Request headers:', headers);
 
         // Debug: Log POST request body to console
-        console.log('[AIService] Making API call to endpoint:', endpoint);
-        console.log('[AIService] Request Body:', requestBody);
+        console.debug('Making API call to endpoint:', endpoint);
+        console.debug('Request Body:', requestBody);
         let response = await fetch(endpoint, {
             method: 'POST',
             headers: headers,
             body: JSON.stringify(requestBody)
         });
-        console.log(`[AIService] Got response with status: ${response.status} ${response.statusText}`);
+        console.debug(`[AIService] Got response with status: ${response.status} ${response.statusText}`);
 
         // Fallback to /api/generate if /api/chat fails with 405
         if (service === 'ollama' && response.status === 405) {
             const base = config.baseUrl.replace(/\/$/, '');
             const fallbackEndpoint = `${base}/api/generate`;
-            console.warn('[AIService] Ollama /api/chat failed with 405, retrying with /api/generate:', fallbackEndpoint);
+            console.warn('Ollama /api/chat failed with 405, retrying with /api/generate:', fallbackEndpoint);
             response = await fetch(fallbackEndpoint, {
                 method: 'POST',
                 headers: headers,
                 body: JSON.stringify(requestBody)
             });
-            console.log(`[AIService] Fallback response status: ${response.status} ${response.statusText}`);
+            console.debug(`[AIService] Fallback response status: ${response.status} ${response.statusText}`);
         }
 
         if (!response.ok) {
             const errorText = await response.text();
             console.error(`[AIService] API request failed: ${response.status} ${response.statusText}`);
-            console.error('[AIService] Error response:', errorText);
+            console.error('Error response:', errorText);
             throw new Error(`API request failed: ${response.status} ${response.statusText} - ${errorText}`);
         }
 
-        console.log('[AIService] Response OK, parsing JSON...');
+        console.debug('Response OK, parsing JSON...');
         const data = await response.json();
-        console.log('[AIService] Response data:', data);
+        console.debug('Response data:', data);
         
         const extractedText = this.extractResponseText(data, service);
-        console.log('[AIService] Extracted response text:', extractedText);
+        console.debug('Extracted response text:', extractedText);
         return extractedText;
     }
 
@@ -436,7 +481,7 @@ Please provide the refined email response text only.`;
         
         switch (service) {
             case 'openai':
-            case 'azure':
+            case 'custom':
                 return {
                     model: config.model || serviceConfig.model,
                     messages: [
@@ -453,7 +498,7 @@ Please provide the refined email response text only.`;
                     temperature: 0.7
                 };
                 
-            case 'anthropic':
+            case 'ollama':
                 return {
                     model: config.model || serviceConfig.model,
                     max_tokens: serviceConfig.maxTokens,
@@ -483,10 +528,10 @@ Please provide the refined email response text only.`;
         };
         switch (service) {
             case 'openai':
-            case 'azure':
+            case 'custom':
                 headers['Authorization'] = `Bearer ${config.apiKey}`;
                 break;
-            // Ollama and anthropic do not require Authorization header by default
+            // Ollama does not require Authorization header by default
         }
         return headers;
     }
@@ -545,8 +590,33 @@ Please provide the refined email response text only.`;
         // Normalize newlines and clean up whitespace issues
         let text = responseText.trim();
         
-        // Remove tabs and normalize them to spaces
-        text = text.replace(/\t/g, ' ');
+        // Remove common AI response prefixes
+        const prefixPatterns = [
+            /^\*\*Refined Response:\*\*\s*/i,
+            /^Refined Response:\s*/i,
+            /^Here is the refined response:\s*/i,
+            /^Here's the refined response:\s*/i,
+            /^Here is the response:\s*/i,
+            /^Here's the response:\s*/i,
+            /^Here is a refined response:\s*/i,
+            /^Here's a refined response:\s*/i,
+            /^Refined response:\s*/i,
+            /^Response:\s*/i,
+            /^Here is.*?response.*?:\s*/i,
+            /^Here's.*?response.*?:\s*/i
+        ];
+        
+        for (const pattern of prefixPatterns) {
+            text = text.replace(pattern, '');
+        }
+        
+        // Remove ALL forms of tabs and tab-like characters aggressively
+        text = text.replace(/\t/g, '');  // Regular tabs
+        text = text.replace(/\u0009/g, ''); // Unicode tab
+        text = text.replace(/\u00A0/g, ' '); // Non-breaking space to regular space
+        text = text.replace(/\u2009/g, ' '); // Thin space to regular space
+        text = text.replace(/\u200B/g, ''); // Zero-width space
+        text = text.replace(/\u2000-\u200F/g, ' '); // Various Unicode spaces to regular space
         
         // Convert \r\n and \r to \n
         text = text.replace(/\r\n?/g, '\n');
@@ -558,7 +628,10 @@ Please provide the refined email response text only.`;
         text = text.replace(/\n{3,}/g, '\n\n');
         
         // Trim leading/trailing whitespace on each line and remove empty lines at start/end
-        const lines = text.split('\n').map(line => line.trim());
+        const lines = text.split('\n').map(line => {
+            // Aggressive trimming including Unicode whitespace characters
+            return line.replace(/^[\s\t\u00A0\u2000-\u200F\u2028\u2029]+|[\s\t\u00A0\u2000-\u200F\u2028\u2029]+$/g, '');
+        });
         
         // Remove empty lines from the beginning and end
         while (lines.length > 0 && lines[0] === '') {
@@ -577,3 +650,4 @@ Please provide the refined email response text only.`;
         };
     }
 }
+

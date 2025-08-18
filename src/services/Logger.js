@@ -14,6 +14,10 @@ export class Logger {
         this.maxRetries = 3;
         this.splunkConnectionError = false;
         
+        // Add unique instance ID for debugging
+        this.instanceId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+        console.debug('Logger instance created:', this.instanceId);
+        
         // Initialize telemetry configuration
         this.initializeTelemetryConfig();
     }
@@ -23,17 +27,17 @@ export class Logger {
      */
     async initializeTelemetryConfig() {
         try {
-            console.log('[Logger] Loading telemetry configuration...');
-            const response = await fetch('/telemetry-config.json');
+            console.debug('Loading telemetry configuration... (instance:', this.instanceId, ')');
+            const response = await fetch('/config/telemetry.json');
             if (response.ok) {
                 this.telemetryConfig = await response.json();
-                console.log('[Logger] Telemetry configuration loaded:', this.telemetryConfig);
+                console.info('Telemetry configuration loaded (instance:', this.instanceId, '):', this.telemetryConfig);
             } else {
-                console.warn('[Logger] Could not load telemetry configuration, using defaults');
+                console.warn('Could not load telemetry configuration, using defaults');
                 this.telemetryConfig = this.getDefaultTelemetryConfig();
             }
         } catch (error) {
-            console.error('[Logger] Failed to load telemetry configuration:', error);
+            console.error('Failed to load telemetry configuration:', error);
             this.telemetryConfig = this.getDefaultTelemetryConfig();
         }
     }
@@ -59,18 +63,19 @@ export class Logger {
      * @param {string} eventType - Type of event (e.g., 'session_start', 'email_analyzed')
      * @param {Object} data - Event data object
      * @param {string} level - Log level ('Information', 'Warning', 'Error')
+     * @param {string} contextEmail - Optional email address for better user context
      */
-    async logEvent(eventType, data = {}, level = 'Information') {
+    async logEvent(eventType, data = {}, level = 'Information', contextEmail = null) {
         if (!this.isEnabled) {
-            console.log('[Logger] Logging disabled:', eventType, data);
+            console.debug('Logging disabled:', eventType, data);
             return;
         }
 
         try {
-            const logEntry = this.createLogEntry(eventType, data);
+            const logEntry = this.createLogEntry(eventType, data, contextEmail);
             
             // Always log to console for development/debugging
-            console.log(`[${level}] ${eventType}:`, logEntry);
+            console.debug(`[${level}] ${eventType}:`, logEntry);
 
             // Add to Splunk queue if telemetry is enabled
             if (this.telemetryConfig?.telemetry?.enabled && this.telemetryConfig.telemetry.provider === 'splunk_hec') {
@@ -78,7 +83,7 @@ export class Logger {
             }
 
         } catch (error) {
-            console.error('[Logger] Failed to log event:', error);
+            console.error('Failed to log event:', error);
         }
     }
 
@@ -86,16 +91,17 @@ export class Logger {
      * Creates a standardized log entry
      * @param {string} eventType - Event type
      * @param {Object} data - Event data
+     * @param {string} contextEmail - Optional email context for user identification
      * @returns {Object} Log entry object
      */
-    createLogEntry(eventType, data) {
+    createLogEntry(eventType, data, contextEmail = null) {
         const baseEntry = {
             eventType: eventType,
             timestamp: new Date().toISOString(),
             source: this.eventSource,
             version: '1.0.0',
             sessionId: this.getSessionId(),
-            userId: this.getUserId()
+            userId: this.getUserId(contextEmail)
         };
 
         // Sanitize sensitive data
@@ -152,7 +158,7 @@ export class Logger {
     async logToSplunk(eventType, logEntry, level) {
         try {
             if (!this.telemetryConfig?.telemetry?.splunk) {
-                console.warn('[Logger] Splunk configuration not available');
+                console.warn('Splunk configuration not available');
                 return;
             }
 
@@ -170,7 +176,7 @@ export class Logger {
                 }
             };
 
-            console.log('[Logger] Preparing Splunk event:', splunkEvent);
+            console.debug('Preparing Splunk event:', splunkEvent);
 
             // Add to Splunk queue for batch processing
             this.splunkQueue.push(splunkEvent);
@@ -181,7 +187,7 @@ export class Logger {
             }
 
         } catch (error) {
-            console.error('[Logger] Failed to log to Splunk:', error);
+            console.error('Failed to log to Splunk:', error);
         }
     }
 
@@ -197,19 +203,33 @@ export class Logger {
         try {
             const splunkConfig = this.telemetryConfig.telemetry.splunk;
 
-            console.log(`[Logger] Flushing ${events.length} events to Splunk HEC`);
+            console.debug(`[Logger] Flushing ${events.length} events to Splunk HEC`);
 
-            const response = await fetch(splunkConfig.hecEndpoint, {
+            // Prepare fetch options
+            const fetchOptions = {
                 method: 'POST',
                 headers: {
                     'Authorization': `Splunk ${splunkConfig.hecToken}`,
                     'Content-Type': 'application/json'
                 },
                 body: events.map(event => JSON.stringify(event)).join('\n')
-            });
+            };
+
+            // For development, if validateCertificate is false and endpoint is HTTPS,
+            // warn user to use HTTP endpoint instead
+            if (!splunkConfig.validateCertificate && splunkConfig.hecEndpoint.startsWith('https://')) {
+                console.warn('Certificate validation disabled but HTTPS endpoint used. Consider using HTTP endpoint for development.');
+            }
+
+            console.debug(`[Logger] Attempting to send to: ${splunkConfig.hecEndpoint}`);
+            console.debug(`[Logger] Request headers:`, fetchOptions.headers);
+            
+            const response = await fetch(splunkConfig.hecEndpoint, fetchOptions);
+
+            console.debug(`[Logger] Response status: ${response.status} ${response.statusText}`);
 
             if (response.ok) {
-                console.log('[Logger] Successfully sent events to Splunk HEC');
+                console.info('Successfully sent events to Splunk HEC');
                 
                 // Reset connection error state on successful connection
                 this.splunkConnectionError = false;
@@ -217,9 +237,9 @@ export class Logger {
                 
                 // Log successful telemetry transmission
                 const result = await response.json();
-                console.log('[Logger] Splunk HEC response:', result);
+                console.debug('Splunk HEC response:', result);
             } else {
-                console.error('[Logger] Failed to send events to Splunk HEC:', response.status, response.statusText);
+                console.error('Failed to send events to Splunk HEC:', response.status, response.statusText);
                 
                 // Re-queue events for retry (with limit)
                 if (events.length < 100) {
@@ -228,10 +248,40 @@ export class Logger {
             }
 
         } catch (error) {
+            console.debug(`[Logger] Fetch error details:`, {
+                message: error.message,
+                name: error.name,
+                stack: error.stack?.substring(0, 200)
+            });
+            
             // Handle connection errors more gracefully
-            if (error.message.includes('fetch') || error.message.includes('ERR_CONNECTION_REFUSED')) {
-                if (!this.splunkConnectionError) {
-                    console.warn('[Logger] Splunk HEC connection unavailable, events will be queued');
+            if (error.message.includes('fetch') || 
+                error.message.includes('ERR_CONNECTION_REFUSED') ||
+                error.message.includes('ERR_CERT_AUTHORITY_INVALID') ||
+                error.message.includes('ERR_CERT_COMMON_NAME_INVALID') ||
+                error.message.includes('ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS')) {
+                
+                // Special handling for private network access errors
+                if (error.message.includes('ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS')) {
+                    if (!this.splunkConnectionError) {
+                        console.warn('Private Network Access blocked connection to localhost. Office add-ins cannot access localhost directly. Consider using a proxy or cloud endpoint for telemetry.');
+                        this.splunkConnectionError = true;
+                    }
+                }
+                // Special handling for certificate errors
+                else if (error.message.includes('ERR_CERT_')) {
+                    if (!this.splunkConnectionError) {
+                        const splunkConfig = this.telemetryConfig.telemetry.splunk;
+                        if (!splunkConfig.validateCertificate && splunkConfig.hecEndpoint.startsWith('https://')) {
+                            const httpEndpoint = splunkConfig.hecEndpoint.replace('https://', 'http://');
+                            console.warn(`[Logger] SSL certificate error detected. Since validateCertificate=false, consider changing endpoint from ${splunkConfig.hecEndpoint} to ${httpEndpoint}`);
+                        } else {
+                            console.warn('Splunk HEC SSL certificate validation failed');
+                        }
+                        this.splunkConnectionError = true;
+                    }
+                } else if (!this.splunkConnectionError) {
+                    console.warn('Splunk HEC connection unavailable, events will be queued');
                     this.splunkConnectionError = true;
                 }
                 
@@ -242,13 +292,13 @@ export class Logger {
                     
                     // If too many retries, clear the queue to prevent memory issues
                     if (this.splunkRetryCount > this.maxRetries) {
-                        console.warn('[Logger] Max Splunk retry attempts reached, clearing queue');
+                        console.warn('Max Splunk retry attempts reached, clearing queue');
                         this.splunkQueue = [];
                         this.splunkRetryCount = 0;
                     }
                 }
             } else {
-                console.error('[Logger] Error flushing Splunk queue:', error);
+                console.error('Error flushing Splunk queue:', error);
             }
         }
     }
@@ -276,7 +326,7 @@ export class Logger {
         if (this.splunkFlushInterval) {
             clearInterval(this.splunkFlushInterval);
             this.splunkFlushInterval = null;
-            console.log('[Logger] Stopped Splunk auto-flush');
+            console.log('Stopped Splunk auto-flush');
         }
     }
 
@@ -357,16 +407,21 @@ export class Logger {
     }
 
     /**
-     * Gets user identifier (anonymized)
+     * Gets user identifier
+     * @param {string} contextEmail - Optional email context to use instead of current user
      * @returns {string} User ID
      */
-    getUserId() {
+    getUserId(contextEmail = null) {
         try {
+            // Use provided context email first (e.g., current email recipient)
+            if (contextEmail) {
+                return contextEmail;
+            }
+            
             // Use Office context if available
             if (typeof Office !== 'undefined' && Office.context?.mailbox?.userProfile?.emailAddress) {
                 const email = Office.context.mailbox.userProfile.emailAddress;
-                // Hash the email for privacy
-                return 'user_' + this.simpleHash(email);
+                return email;
             }
         } catch (error) {
             console.warn('Could not get user ID from Office context');
@@ -424,3 +479,4 @@ export class Logger {
         }
     }
 }
+

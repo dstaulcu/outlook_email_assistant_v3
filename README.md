@@ -5,7 +5,7 @@ AI-Powered Email Analysis Outlook Add-in that enhances email productivity throug
 ## Features
 
 - **AI-Powered Email Analysis**: Intelligent email classification, tone detection, and response assistance
-- **Multi-Provider AI Support**: OpenAI, Anthropic, Azure OpenAI, Ollama (local), and custom endpoints
+- **Multi-Provider AI Support**: OpenAI-compatible providers, Ollama (local), and custom on-site endpoints
 - **Security-First Design**: Built-in classification detection (UNCLASSIFIED, SECRET, etc.) with compliance logging
 - **Accessible Interface**: Full keyboard navigation, screen reader support, and high-contrast mode
 - **Advanced Settings Management**: Persistent settings with Office 365 roaming and local backup
@@ -37,7 +37,7 @@ npm run build
 
 4. Deploy using the build and deploy script:
 ```bash
-.\tools\build_and_deploy.ps1 -Environment Prd
+.\tools\deploy_web_assets.ps1 -Environment Prd
 ```
 
 5. Sideload the manifest (`manifest.xml`) in Outlook
@@ -46,7 +46,7 @@ npm run build
 
 - **Start development watcher**: `npm run dev`
 - **Build for production**: `npm run build`
-- **Deploy to environment**: `.\tools\build_and_deploy.ps1 -Environment Dev`
+- **Deploy to environment**: `.\tools\deploy_web_assets.ps1 -Environment Dev`
 - **Validate manifest**: `npm run validate-manifest`
 
 ## Architecture
@@ -59,7 +59,7 @@ npm run build
 
 ### Core Services Architecture
 - **EmailAnalyzer**: Extracts and processes email content from Office.js API
-- **AIService**: Multi-provider AI integration (OpenAI, Anthropic, Azure, Ollama, Custom)
+- **AIService**: Multi-provider AI integration (OpenAI-compatible, Ollama, Custom on-site providers)
 - **ClassificationDetector**: Security classification pattern matching and validation
 - **SettingsManager**: Dual-storage settings (Office.js roaming + localStorage backup)
 - **Logger**: Windows Application Log integration via PowerShell
@@ -67,7 +67,7 @@ npm run build
 - **AccessibilityManager**: ARIA live regions, keyboard navigation, screen reader support
 
 ### Deployment Architecture
-- **Hosting**: AWS S3 static website hosting with CloudFront-ready configuration
+- **Hosting**: AWS S3 static website hosting
 - **Build Pipeline**: PowerShell-based build and deployment automation
 - **Environment Management**: Multi-environment support (Dev/Prd) with URL rewriting
 - **Asset Management**: Automated file discovery and URL updating for deployments
@@ -108,12 +108,13 @@ npm run build
 │   │   ├── commands.html      # Command page template
 │   │   └── commands.js        # Ribbon command handlers
 │   ├── assets/               # Static assets (CSS, icons)
-│   ├── default-providers.json # Default AI provider configurations
-│   ├── default-models.json   # Default AI model configurations
+│   ├── config/                # Configuration files
+│   │   ├── ai-providers.json # AI provider configurations
+│   │   ├── ai-models.json    # Default AI model configurations
+│   │   └── telemetry.json    # Telemetry and logging configuration
 │   └── manifest.xml          # Office Add-in manifest
 ├── tools/                    # Build and deployment scripts
-│   ├── build_and_deploy.ps1  # Main build and deploy automation
-│   ├── deploy.ps1           # Legacy deployment script
+│   ├── deploy_web_assets.ps1  # Main build and deploy automation
 │   └── deployment-environments.json # Environment configurations
 ├── webpack.config.js        # Build configuration
 └── package.json            # Project dependencies and scripts
@@ -123,11 +124,9 @@ npm run build
 
 The add-in supports multiple AI providers with automatic model discovery:
 
-- **OpenAI**: GPT-4, GPT-3.5-turbo with API key authentication
-- **Anthropic**: Claude models with API key authentication  
-- **Azure OpenAI**: Enterprise-grade OpenAI models with Azure authentication
+- **OpenAI-Compatible**: Standard OpenAI API endpoints with API key authentication
 - **Ollama**: Local LLM hosting with automatic model detection via `/api/tags`
-- **Custom Endpoints**: Support for any OpenAI-compatible API endpoint
+- **Custom On-Site Providers**: Support for OnSiteProvider-1, OnSiteProvider-2, and other OpenAI-compatible endpoints available in your work environment
 
 ### Default Configurations
 - Provider endpoints and models are defined in `src/default-providers.json` and `src/default-models.json`

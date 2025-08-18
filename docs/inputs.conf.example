@@ -1,0 +1,29 @@
+# Splunk inputs.conf - HTTP Event Collector (HEC) Configuration
+# Location: %SPLUNK_HOME%\etc\system\local\inputs.conf
+
+[http]
+# Enable HTTP Event Collector
+disabled = 0
+
+# CORS Configuration - Allow Office Add-in to send events
+crossOriginSharingPolicy = *
+
+# Enable SSL for HEC (required for HTTPS Office add-ins)
+enableSSL = 1
+port = 8088
+
+# Optional: SSL Configuration (if you want to specify custom certs)
+# serverCert = $SPLUNK_HOME/etc/auth/server.pem
+# sslPassword = your_ssl_password
+
+# Optional: Performance settings
+dedicatedIoThreads = 2
+
+# Optional: Index routing (if you want to force specific index)
+# index = main
+
+# Optional: Source type mapping
+# [http://outlook_addon]
+# disabled = 0
+# index = main
+# sourcetype = json:outlook_email_assistant

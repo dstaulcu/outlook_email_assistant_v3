@@ -12,24 +12,24 @@ import { UIController } from '../ui/UIController';
 
 class TaskpaneApp {
     async fetchDefaultProvidersConfig() {
-        // Fetch default-providers.json from public directory
+        // Fetch ai-providers.json from public config directory
         try {
-            const response = await fetch('/default-providers.json');
-            if (!response.ok) throw new Error('Failed to fetch default-providers.json');
+            const response = await fetch('/config/ai-providers.json');
+            if (!response.ok) throw new Error('Failed to fetch ai-providers.json');
             return await response.json();
         } catch (e) {
-            console.warn('[Default Providers] Could not load default-providers.json:', e);
+            console.warn('[Default Providers] Could not load ai-providers.json:', e);
             return {};
         }
     }
     async fetchDefaultModelsConfig() {
-        // Fetch default-models.json from public directory
+        // Fetch ai-models.json from public config directory
         try {
-            const response = await fetch('/default-models.json');
-            if (!response.ok) throw new Error('Failed to fetch default-models.json');
+            const response = await fetch('/config/ai-models.json');
+            if (!response.ok) throw new Error('Failed to fetch ai-models.json');
             return await response.json();
         } catch (e) {
-            console.warn('[Default Models] Could not load default-models.json:', e);
+            console.warn('[Default Models] Could not load ai-models.json:', e);
             return {};
         }
     }
@@ -38,10 +38,10 @@ class TaskpaneApp {
         // Switch to the response tab in the UI
         const responseTabButton = document.querySelector('.tab-button[aria-controls="panel-response"]');
         if (responseTabButton) {
-            console.log('[TaskpaneApp] Switching to response tab');
+            console.debug('Switching to response tab');
             responseTabButton.click();
         } else {
-            console.error('[TaskpaneApp] Response tab button not found');
+            console.error('Response tab button not found');
         }
     }
     showResponseSection() {
@@ -52,6 +52,10 @@ class TaskpaneApp {
         }
     }
     constructor() {
+        // Add unique instance ID for debugging
+        this.instanceId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+        console.debug('TaskpaneApp instance created:', this.instanceId);
+        
         this.emailAnalyzer = new EmailAnalyzer();
         this.aiService = new AIService();
         this.classificationDetector = new ClassificationDetector();
@@ -64,6 +68,10 @@ class TaskpaneApp {
         this.currentAnalysis = null;
         this.currentResponse = null;
         this.sessionStartTime = Date.now();
+        
+        // Telemetry tracking properties
+        this.refinementCount = 0;
+        this.hasUsedClipboard = false;
 
         // Model selection UI elements
         this.modelServiceSelect = null;
@@ -73,25 +81,6 @@ class TaskpaneApp {
 
     async initialize() {
         try {
-        // Show/hide Analyze Email button based on whether a reply/compose is in progress
-        const analyzeBtn = document.getElementById('analyze-email');
-        if (analyzeBtn) {
-            let isCompose = false;
-            try {
-                // Compose mode if setAsync is available (reply/forward/compose window)
-                isCompose = (
-                    typeof Office !== 'undefined' &&
-                    Office.context &&
-                    Office.context.mailbox &&
-                    Office.context.mailbox.item &&
-                    Office.context.mailbox.item.body &&
-                    typeof Office.context.mailbox.item.body.setAsync === 'function'
-                );
-            } catch (e) {
-                isCompose = false;
-            }
-            analyzeBtn.style.display = isCompose ? '' : 'none';
-        }
             // Initialize Office.js
             await this.initializeOffice();
             
@@ -101,7 +90,7 @@ class TaskpaneApp {
             // Load provider config before UI setup
             this.defaultProvidersConfig = await this.fetchDefaultProvidersConfig();
             // Setup UI
-            this.setupUI();
+            await this.setupUI();
             
             // Setup accessibility
             this.accessibilityManager.initialize();
@@ -111,6 +100,9 @@ class TaskpaneApp {
             
             // Load current email
             await this.loadCurrentEmail();
+            
+            // Try automatic analysis if conditions are met
+            await this.attemptAutoAnalysis();
             
             // Hide loading, show main content
             this.uiController.hideLoading();
@@ -142,25 +134,30 @@ class TaskpaneApp {
     }
 
     async initializeTelemetry() {
-        console.log('[TaskpaneApp] Initializing telemetry...');
+        console.debug('Initializing telemetry...');
         
         try {
-            // Wait for logger telemetry config to load
-            await this.logger.initializeTelemetryConfig();
+            // Logger already initialized telemetry config in constructor, just check if it's ready
+            // If not initialized yet, wait for it
+            if (!this.logger.telemetryConfig) {
+                console.debug('Waiting for telemetry config to load...');
+                // Give it a moment to load
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
             
             // Start Splunk auto-flush if enabled
             if (this.logger.telemetryConfig?.telemetry?.enabled && 
                 this.logger.telemetryConfig.telemetry.provider === 'splunk_hec') {
                 this.logger.startSplunkAutoFlush();
-                console.log('[TaskpaneApp] Splunk telemetry enabled and auto-flush started');
+                console.info('Splunk telemetry enabled and auto-flush started');
             }
             
         } catch (error) {
-            console.error('[TaskpaneApp] Failed to initialize telemetry:', error);
+            console.error('Failed to initialize telemetry:', error);
         }
     }
 
-    setupUI() {
+    async setupUI() {
         // Bind event listeners
         this.bindEventListeners();
         
@@ -170,20 +167,22 @@ class TaskpaneApp {
         // Setup tabs
         this.initializeTabs();
         
-        // Load settings into UI
-        this.loadSettingsIntoUI();
         // Model selection UI elements
         this.modelServiceSelect = document.getElementById('model-service');
         this.modelSelectGroup = document.getElementById('model-select-group');
         this.modelSelect = document.getElementById('model-select');
         this.baseUrlInput = document.getElementById('base-url');
-        // Populate model service dropdown from defaultProvidersConfig
+        
+        // Populate model service dropdown from defaultProvidersConfig BEFORE loading settings
         if (this.modelServiceSelect && this.defaultProvidersConfig) {
             this.modelServiceSelect.innerHTML = Object.entries(this.defaultProvidersConfig)
                 .filter(([key, val]) => key !== 'custom')
                 .map(([key, val]) => `<option value="${key}">${val.label}</option>`)
                 .join('');
         }
+        
+        // Load settings into UI (this will now properly select the saved model-service value)
+        await this.loadSettingsIntoUI();
         // Hide AI config placeholder in main UI by default
         const aiConfigPlaceholder = document.getElementById('ai-config-placeholder');
         if (aiConfigPlaceholder) {
@@ -196,16 +195,16 @@ class TaskpaneApp {
                 const providerKey = this.modelServiceSelect.value;
                 if (this.defaultProvidersConfig && this.defaultProvidersConfig[providerKey]) {
                     const baseUrl = this.defaultProvidersConfig[providerKey].baseUrl || '';
-                    console.log(`[Provider Base URL] ${providerKey}: ${baseUrl}`);
+                    console.debug(`Model provider key: ${providerKey}, base URL: ${baseUrl}`);
                 }
                 this.updateModelDropdown();
             });
             // Set initial baseUrl to console
             if (this.modelServiceSelect.value && this.defaultProvidersConfig && this.defaultProvidersConfig[this.modelServiceSelect.value]) {
                 const baseUrl = this.defaultProvidersConfig[this.modelServiceSelect.value].baseUrl || '';
-                console.log(`[Provider Base URL] ${this.modelServiceSelect.value}: ${baseUrl}`);
+                console.debug(`Model provider: ${this.modelServiceSelect.value}, base URL: ${baseUrl}`);
             }
-            this.updateModelDropdown();
+            await this.updateModelDropdown();
         }
     }
 
@@ -221,7 +220,6 @@ class TaskpaneApp {
 
         // Response actions
         document.getElementById('copy-response').addEventListener('click', () => this.copyResponse());
-        document.getElementById('insert-response').addEventListener('click', () => this.insertResponse());
         
         // Settings
         document.getElementById('open-settings').addEventListener('click', () => this.openSettings());
@@ -300,7 +298,7 @@ class TaskpaneApp {
     }
 
     displayEmailSummary(email) {
-        console.log('[TaskpaneApp] Displaying email summary for:', email);
+        console.debug('Displaying email summary:', email);
         
         // Only update the fields we're actually showing
         const subjectElement = document.getElementById('email-subject');
@@ -315,7 +313,7 @@ class TaskpaneApp {
         
         if (email.body) {
             classificationResult = this.classificationDetector.detectClassification(email.body);
-            console.log('[TaskpaneApp] Classification result:', classificationResult);
+            console.debug('Classification result:', classificationResult);
             
             if (classificationResult.detected) {
                 classificationText = classificationResult.text;
@@ -334,7 +332,7 @@ class TaskpaneApp {
         if (classificationElement) {
             classificationElement.textContent = classificationText;
             classificationElement.className = `classification classification-${classificationColor}`;
-            console.log('[TaskpaneApp] Set classification display:', classificationText, classificationColor);
+            console.debug('Set classification display:', classificationText, classificationColor);
         }
         
         // Store classification result for later use
@@ -348,6 +346,140 @@ class TaskpaneApp {
         // document.getElementById('email-length').textContent = `${email.bodyLength || 0} characters`;
     }
 
+    async attemptAutoAnalysis() {
+        console.debug('Checking if automatic analysis should be performed...');
+        
+        // Only auto-analyze if we have an email
+        if (!this.currentEmail) {
+            console.debug('No email available for auto-analysis');
+            return;
+        }
+
+        try {
+            // Get current AI provider settings
+            const currentSettings = await this.settingsManager.getSettings();
+            console.debug('[DEBUG] Auto-analysis settings check:', {
+                fullSettings: currentSettings,
+                modelService: currentSettings['model-service'],
+                modelServiceType: typeof currentSettings['model-service'],
+                modelServiceLength: currentSettings['model-service']?.length
+            });
+            
+            const selectedService = currentSettings['model-service'];
+            
+            // Also check what the UI element shows
+            const modelServiceElement = document.getElementById('model-service');
+            console.debug('[DEBUG] UI element check:', {
+                elementExists: !!modelServiceElement,
+                elementValue: modelServiceElement?.value,
+                elementType: typeof modelServiceElement?.value,
+                optionsCount: modelServiceElement?.options?.length,
+                selectedIndex: modelServiceElement?.selectedIndex,
+                allOptions: modelServiceElement ? Array.from(modelServiceElement.options).map(opt => ({value: opt.value, text: opt.text, selected: opt.selected})) : 'N/A'
+            });
+            
+            if (!selectedService) {
+                console.warn('No AI service configured, skipping auto-analysis');
+                return;
+            }
+
+            // Check for classification compatibility with selected provider
+            const classification = this.classificationDetector.detectClassification(this.currentEmail.body);
+            console.debug('Email classification for auto-analysis:', classification);
+            
+            // Check if provider supports this classification level
+            const isCompatible = await this.checkProviderClassificationCompatibility(selectedService, classification);
+            
+            if (!isCompatible) {
+                console.debug('Provider incompatible with classification, skipping auto-analysis');
+                return;
+            }
+            
+            // Skip auto-analysis for SECRET or above
+            if (classification.level > 2) {
+                console.debug('Classification level too high for auto-analysis');
+                return;
+            }
+
+            // Test AI service health
+            const config = this.getAIConfiguration();
+            const isHealthy = await this.aiService.testConnection(config);
+            
+            if (!isHealthy) {
+                console.debug('AI service not healthy, skipping auto-analysis');
+                return;
+            }
+
+            console.info('Conditions met, performing automatic analysis...');
+            await this.performAnalysisWithResponse();
+            
+        } catch (error) {
+            console.error('Error during auto-analysis check:', error);
+            // Don't show error to user, just skip auto-analysis
+        }
+    }
+
+    async performAnalysisWithResponse() {
+        try {
+            this.uiController.showStatus('Auto-analyzing email...');
+            
+            // Get AI configuration
+            const config = this.getAIConfiguration();
+            
+            // Get classification information for telemetry
+            const classificationResult = this.currentEmail.classificationResult || 
+                this.classificationDetector.detectClassification(this.currentEmail.body);
+            
+            // Perform analysis
+            this.currentAnalysis = await this.aiService.analyzeEmail(this.currentEmail, config);
+            
+            // Display results
+            this.displayAnalysis(this.currentAnalysis);
+            
+            // Auto-generate response as well (consolidating user actions)
+            console.info('Auto-generating response after analysis...');
+            const responseConfig = this.getResponseConfiguration();
+            
+            // Generate response using analysis data
+            this.currentResponse = await this.aiService.generateResponse(
+                this.currentEmail, 
+                this.currentAnalysis, 
+                { ...config, ...responseConfig }
+            );
+            
+            // Display the response
+            this.displayResponse(this.currentResponse);
+            this.showResponseSection();
+            
+            // Switch to response tab for convenience
+            this.switchToResponseTab();
+            
+            // Show refine button so user can modify the auto-generated response
+            this.showRefineButton();
+            
+            // Log successful auto-analysis and response generation
+            this.logger.logEvent('auto_analysis_completed', {
+                model_service: config.service,
+                model_name: config.model,
+                email_length: this.currentEmail.bodyLength,
+                classification: classificationResult.text,
+                classification_level: classificationResult.level,
+                auto_response_generated: true,
+                refinement_count: this.refinementCount,
+                clipboard_used: this.hasUsedClipboard,
+                performance_metrics: {
+                    start_time: Date.now()
+                }
+            }, 'Information', this.getRecipientEmailForTelemetry());
+            
+            this.uiController.showStatus('Email analyzed and draft response generated automatically.');
+            
+        } catch (error) {
+            console.error('Auto-analysis failed:', error);
+            this.uiController.showStatus('Automatic analysis failed. You can still analyze manually.');
+        }
+    }
+
     async analyzeEmail() {
         if (!this.currentEmail) {
             this.uiController.showError('No email selected. Please select an email first.');
@@ -356,7 +488,7 @@ class TaskpaneApp {
 
         // Check for classification compatibility with selected provider
         const classification = this.classificationDetector.detectClassification(this.currentEmail.body);
-        console.log('[TaskpaneApp] Email classification check:', classification);
+        console.debug('Email classification check:', classification);
         
         // Get current AI provider settings
         const currentSettings = await this.settingsManager.getSettings();
@@ -380,26 +512,26 @@ class TaskpaneApp {
     }
 
     async checkProviderClassificationCompatibility(serviceProvider, classification) {
-        console.log('[TaskpaneApp] Checking provider compatibility:', serviceProvider, classification);
+        console.debug('Checking provider compatibility:', serviceProvider, classification);
         
         try {
             const providersConfig = await this.fetchDefaultProvidersConfig();
             const providerInfo = providersConfig[serviceProvider];
             
             if (!providerInfo) {
-                console.warn('[TaskpaneApp] No provider configuration found for:', serviceProvider);
+                console.warn('No provider configuration found for:', serviceProvider);
                 return true; // Allow if no config found
             }
             
             if (providerInfo.maxClassificationLevel !== undefined) {
                 const compatible = classification.level <= providerInfo.maxClassificationLevel;
-                console.log(`[TaskpaneApp] Classification compatibility: ${classification.text} (level ${classification.level}) vs ${serviceProvider} (max level ${providerInfo.maxClassificationLevel}) = ${compatible}`);
+                console.debug(`Classification compatibility: ${classification.text} (level ${classification.level}) vs ${serviceProvider} (max level ${providerInfo.maxClassificationLevel}) = ${compatible}`);
                 return compatible;
             }
             
             return true; // Allow if no classification restrictions
         } catch (error) {
-            console.error('[TaskpaneApp] Error checking provider compatibility:', error);
+            console.error('Error checking provider compatibility:', error);
             return true; // Allow on error
         }
     }
@@ -487,10 +619,12 @@ class TaskpaneApp {
                 classification_detected: classificationResult.detected,
                 has_markings: classificationResult.markings ? classificationResult.markings.length > 0 : false,
                 analysis_success: true,
+                refinement_count: this.refinementCount,
+                clipboard_used: this.hasUsedClipboard,
                 performance_metrics: {
                     start_time: Date.now()
                 }
-            });
+            }, 'Information', this.getRecipientEmailForTelemetry());
             
             this.uiController.showStatus('Email analysis completed successfully.');
             
@@ -534,7 +668,7 @@ class TaskpaneApp {
                 { ...config, ...responseConfig }
             );
             
-            console.log('[TaskpaneApp] Response generated:', this.currentResponse);
+            console.info('Response generated:', this.currentResponse);
             
             // Display response
             this.displayResponse(this.currentResponse);
@@ -553,9 +687,14 @@ class TaskpaneApp {
 
     async refineResponse() {
         const customInstructions = document.getElementById('custom-instructions').value.trim();
+        const currentSettings = this.settingsManager.getSettings();
         
-        if (!customInstructions) {
-            this.uiController.showError('Please provide instructions for refining the response.');
+        // Check if there are any refinement inputs (custom instructions OR changed settings)
+        const hasCustomInstructions = customInstructions.length > 0;
+        const hasSettingsChanges = true; // Always allow refinement based on current slider settings
+        
+        if (!hasCustomInstructions && !hasSettingsChanges) {
+            this.uiController.showError('Please provide custom instructions or adjust response settings (length, tone, urgency) for refining the response.');
             return;
         }
 
@@ -565,14 +704,27 @@ class TaskpaneApp {
             
             const config = this.getAIConfiguration();
             
+            // Pass both custom instructions and current response settings
             this.currentResponse = await this.aiService.refineResponse(
                 this.currentResponse,
                 customInstructions,
-                config
+                config,
+                currentSettings // Pass current settings for length, tone, urgency
             );
             
             this.displayResponse(this.currentResponse);
             this.uiController.showStatus('Response refined successfully.');
+            
+            // Increment refinement counter for telemetry
+            this.refinementCount++;
+            
+            // Log response refinement event
+            this.logger.logEvent('response_refined', {
+                refinement_count: this.refinementCount,
+                clipboard_used: this.hasUsedClipboard,
+                has_custom_instructions: hasCustomInstructions,
+                custom_instructions_length: customInstructions.length
+            }, 'Information', this.getRecipientEmailForTelemetry());
             
         } catch (error) {
             console.error('Response refinement failed:', error);
@@ -584,10 +736,18 @@ class TaskpaneApp {
 
     getAIConfiguration() {
         let model = this.getSelectedModel();
-        // Always use the unified modelSelect for model selection
+        // Always prioritize the modelSelect dropdown value if available
         if (this.modelSelect && this.modelSelect.value) {
             model = this.modelSelect.value;
         }
+        // Fallback to saved settings if UI element is not available
+        else {
+            const settings = this.settingsManager.getSettings();
+            if (settings['model-select']) {
+                model = settings['model-select'];
+            }
+        }
+        
         const apiKeyElement = document.getElementById('api-key');
         const endpointUrlElement = document.getElementById('endpoint-url');
         return {
@@ -617,8 +777,6 @@ class TaskpaneApp {
         const modelMap = {
             'openai': 'gpt-4',
             'ollama': '',
-            'anthropic': 'claude-3-sonnet',
-            'azure': 'gpt-4',
             'custom': 'custom'
         };
         return modelMap[service] || 'gpt-4';
@@ -650,6 +808,11 @@ class TaskpaneApp {
                     this.modelSelect.value = preferred;
                 } else if (models.length) {
                     this.modelSelect.value = models[0];
+                }
+                
+                // Save the model selection to settings if one was set
+                if (this.modelSelect.value) {
+                    await this.saveSettings();
                 }
             } catch (err) {
                 errorMsg = `Error fetching models: ${err.message || err}`;
@@ -710,55 +873,88 @@ class TaskpaneApp {
 
     displayAnalysis(analysis) {
         const container = document.getElementById('email-analysis');
+        
+        // Build due dates section if present
+        let dueDatesHtml = '';
+        if (analysis.dueDates && analysis.dueDates.length > 0) {
+            const dueDateItems = analysis.dueDates.map(dueDate => {
+                const urgentClass = dueDate.isUrgent ? 'urgent-due-date' : '';
+                const dateDisplay = dueDate.date !== 'unspecified' ? dueDate.date : 'Date not specified';
+                const timeDisplay = dueDate.time !== 'unspecified' ? ` at ${dueDate.time}` : '';
+                
+                return `<li class="due-date-item ${urgentClass}">
+                    <strong>${this.escapeHtml(dueDate.description)}</strong><br>
+                    <span class="due-date-info">Due: ${dateDisplay}${timeDisplay}</span>
+                    ${dueDate.isUrgent ? '<span class="urgent-badge">URGENT</span>' : ''}
+                </li>`;
+            }).join('');
+            
+            dueDatesHtml = `
+                <h3 class="due-dates-header">⏰ Due Dates & Deadlines</h3>
+                <ul class="due-dates-list">
+                    ${dueDateItems}
+                </ul>
+            `;
+        }
+        
         container.innerHTML = `
             <div class="analysis-content">
+                ${dueDatesHtml}
+                
                 <h3>Key Points</h3>
                 <ul>
                     ${analysis.keyPoints.map(point => `<li>${this.escapeHtml(point)}</li>`).join('')}
                 </ul>
 
-                <h3>Sentiment</h3>
+                <h3>Intent & Sentiment</h3>
                 <ul>
-                    <li>${this.escapeHtml(analysis.sentiment)}</li>
+                    <li><strong>Purpose:</strong> ${this.escapeHtml(analysis.intent || 'Not specified')}</li>
+                    <li><strong>Tone:</strong> ${this.escapeHtml(analysis.sentiment)}</li>
+                    <li><strong>Urgency:</strong> ${analysis.urgencyLevel}/5 - ${this.escapeHtml(analysis.urgencyReason || 'No reason provided')}</li>
                 </ul>
 
                 <h3>Recommended Actions</h3>
                 <ul>
                     ${analysis.actions.map(action => `<li>${this.escapeHtml(action)}</li>`).join('')}
                 </ul>
+                
+                ${analysis.responseStrategy ? `
+                <h3>Response Strategy</h3>
+                <ul>
+                    <li>${this.escapeHtml(analysis.responseStrategy)}</li>
+                </ul>
+                ` : ''}
             </div>
         `;
     }
 
     displayResponse(response) {
-        console.log('[TaskpaneApp] Displaying response:', response);
+        console.debug('Displaying response:', response);
         const container = document.getElementById('response-draft');
         
         if (!container) {
-            console.error('[TaskpaneApp] response-draft container not found');
+            console.error('response-draft container not found');
             return;
         }
         
         if (!response || !response.text) {
-            console.error('[TaskpaneApp] Invalid response object:', response);
+            console.error('Invalid response object:', response);
             container.innerHTML = '<div class="error">Error: Invalid response received</div>';
             return;
         }
         
-        // Clean up the text for display (remove tabs, normalize whitespace)
-        let cleanText = response.text.replace(/\t/g, '').trim();
-        cleanText = cleanText.replace(/[ ]+/g, ' '); // Replace multiple spaces with single space
+        // Use separate formatting for display (less aggressive than clipboard)
+        const cleanText = this.formatTextForDisplay(response.text);
         
         container.innerHTML = `
             <div class="response-content">
-                <h3>Generated Response</h3>
                 <div class="response-text" id="response-text-content">
                     ${this.escapeHtml(cleanText).replace(/\n/g, '<br>')}
                 </div>
             </div>
         `;
         
-        console.log('[TaskpaneApp] Response displayed successfully');
+        console.info('Response displayed successfully');
     }
 
     escapeHtml(text) {
@@ -769,195 +965,140 @@ class TaskpaneApp {
 
     async copyResponse() {
         try {
-            const responseText = document.getElementById('response-text-content').textContent;
-            await navigator.clipboard.writeText(responseText);
+            // Get the original response text from the currentResponse object for better formatting
+            let responseText = '';
+            
+            if (this.currentResponse && this.currentResponse.text) {
+                responseText = this.currentResponse.text;
+            } else {
+                // Fallback to displayed content if currentResponse not available
+                const responseElement = document.getElementById('response-text-content');
+                responseText = responseElement ? responseElement.textContent : '';
+            }
+            
+            if (!responseText) {
+                this.uiController.showError('No response text to copy.');
+                return;
+            }
+            
+            // Format the text properly for clipboard with proper line breaks
+            const formattedText = this.formatTextForClipboard(responseText);
+            
+            await navigator.clipboard.writeText(formattedText);
             this.uiController.showStatus('Response copied to clipboard.');
+            
+            // Track clipboard usage for telemetry
+            this.hasUsedClipboard = true;
+            
+            // Log clipboard usage event
+            this.logger.logEvent('response_copied', {
+                refinement_count: this.refinementCount,
+                response_length: formattedText.length
+            }, 'Information', this.getRecipientEmailForTelemetry());
         } catch (error) {
             console.error('Failed to copy response:', error);
             this.uiController.showError('Failed to copy response to clipboard.');
         }
     }
 
-    async insertResponse() {
-        try {
-            // Get the cleaned text from the displayed content instead of the raw response
-            const responseTextElement = document.getElementById('response-text-content');
-            const responseText = responseTextElement ? responseTextElement.textContent : '';
-            
-            console.log('[InsertResponse] Response text:', responseText);
-            if (!responseText || responseText.trim().length === 0) {
-                this.uiController.showError('No response text to insert.');
-                return;
-            }
-            
-            // Check Office.js and mailbox context
-            if (typeof Office === 'undefined' || !Office.context || !Office.context.mailbox || !Office.context.mailbox.item || !Office.context.mailbox.item.body) {
-                this.uiController.showError('Office.js mailbox context is not available. Please run this add-in inside Outlook.');
-                console.error('[InsertResponse] Office.js mailbox context missing.');
-                return;
-            }
-            
-            // Format text for Outlook with proper line breaks
-            const formattedText = this.formatTextForOutlook(responseText);
-            console.log('[InsertResponse] Formatted text:', formattedText);
-            
-            // Try to use setSelectedDataAsync first (inserts at cursor position) with plain text
-            if (typeof Office.context.mailbox.item.body.setSelectedDataAsync === 'function') {
-                Office.context.mailbox.item.body.setSelectedDataAsync(
-                    formattedText,
-                    { coercionType: Office.CoercionType.Text },
-                    (result) => {
-                        if (result.status === Office.AsyncResultStatus.Succeeded) {
-                            this.uiController.showStatus('Response inserted at cursor position.');
-                        } else {
-                            console.error('[InsertResponse] setSelectedDataAsync error:', result);
-                            // Fallback to HTML approach
-                            this.insertResponseAsHtml(responseText);
-                        }
-                    }
-                );
-            } else {
-                // Fallback to HTML approach
-                this.insertResponseAsHtml(responseText);
-            }
-        } catch (error) {
-            console.error('Failed to insert response:', error);
-            this.uiController.showError('Failed to insert response into email.');
-        }
-    }
-
     /**
-     * Format text for Outlook with proper line breaks
-     * @param {string} text - Plain text to format
-     * @returns {string} Formatted text with proper line breaks
+     * Format text for display in the TaskPane (more conservative than clipboard)
+     * @param {string} text - The text to format
+     * @returns {string} Formatted text for display
      */
-    formatTextForOutlook(text) {
-        // Clean up the text first - remove tabs and normalize whitespace
-        let formatted = text.replace(/\t/g, '').trim(); // Remove all tabs
-        formatted = formatted.replace(/[ ]+/g, ' '); // Replace multiple spaces with single space
+    formatTextForDisplay(text) {
+        // Start with the cleaned text
+        let formatted = text.trim();
         
-        // Use Windows-style line breaks
-        formatted = formatted.replace(/\n/g, '\r\n');
+        // Remove ALL forms of tabs and tab-like characters aggressively
+        formatted = formatted.replace(/\t/g, '');  // Regular tabs
+        formatted = formatted.replace(/\u0009/g, ''); // Unicode tab
+        formatted = formatted.replace(/\u00A0/g, ' '); // Non-breaking space to regular space
+        formatted = formatted.replace(/\u2009/g, ' '); // Thin space to regular space
+        formatted = formatted.replace(/\u200B/g, ''); // Zero-width space
+        formatted = formatted.replace(/\u2000-\u200F/g, ''); // Various Unicode spaces
+        formatted = formatted.replace(/\u2028/g, '\n'); // Line separator to newline
+        formatted = formatted.replace(/\u2029/g, '\n\n'); // Paragraph separator to double newline
         
-        // Add extra spacing between existing paragraphs (convert double line breaks to triple)
-        formatted = formatted.replace(/\r\n\r\n/g, '\r\n\r\n\r\n');
+        // Remove excessive spaces
+        formatted = formatted.replace(/[ ]{2,}/g, ' '); // Multiple spaces to single space
         
-        // If there are no existing paragraph breaks, try to detect natural break points
-        if (!formatted.includes('\r\n\r\n')) {
-            // Look for common greeting patterns and add line breaks
-            formatted = formatted.replace(/(Hi\s+\w+,)/gi, '$1\r\n\r\n');
-            formatted = formatted.replace(/(Dear\s+\w+,)/gi, '$1\r\n\r\n');
-            formatted = formatted.replace(/(Hello\s+\w+,)/gi, '$1\r\n\r\n');
-            
-            // Look for "Thanks for" patterns that often start new paragraphs
-            formatted = formatted.replace(/\s+(Thanks for [^.!?]*[.!?])/gi, '\r\n\r\n$1');
-            
-            // Look for sentence endings followed by capital letters (likely paragraph breaks)
-            formatted = formatted.replace(/([.!?])\s+([A-Z][a-z])/g, '$1\r\n\r\n$2');
-            
-            // Handle closing salutations - look for the pattern and ensure proper spacing
-            // Match: sentence ending, optional space, salutation, optional comma, space, name
-            formatted = formatted.replace(/([.!?])\s*(Best\s+regards?),?\s+(\w+(?:\s+\w+)*)/gi, '$1\r\n\r\n$2,\r\n$3');
-            formatted = formatted.replace(/([.!?])\s*(Best),?\s+(\w+(?:\s+\w+)*)/gi, '$1\r\n\r\n$2,\r\n$3');
-            formatted = formatted.replace(/([.!?])\s*(Sincerely),?\s+(\w+(?:\s+\w+)*)/gi, '$1\r\n\r\n$2,\r\n$3');
-            formatted = formatted.replace(/([.!?])\s*(Thanks?),?\s+(\w+(?:\s+\w+)*)/gi, '$1\r\n\r\n$2,\r\n$3');
-            formatted = formatted.replace(/([.!?])\s*(Regards?),?\s+(\w+(?:\s+\w+)*)/gi, '$1\r\n\r\n$2,\r\n$3');
-            formatted = formatted.replace(/([.!?])\s*(Cheers),?\s+(\w+(?:\s+\w+)*)/gi, '$1\r\n\r\n$2,\r\n$3');
+        // Normalize line endings
+        formatted = formatted.replace(/\r\n?/g, '\n');
+        
+        // Remove leading/trailing whitespace from each line, including any hidden characters
+        formatted = formatted.split('\n').map(line => {
+            return line.replace(/^[\s\t\u00A0\u2000-\u200F\u2028\u2029]+|[\s\t\u00A0\u2000-\u200F\u2028\u2029]+$/g, '');
+        }).join('\n');
+        
+        // Remove empty lines at the beginning and end
+        formatted = formatted.replace(/^\n+/, '').replace(/\n+$/, '');
+        
+        // Only add minimal paragraph breaks - don't be as aggressive as clipboard version
+        // Just ensure there's a break after greeting if it doesn't exist
+        if (formatted.match(/(Hi|Hello|Dear)\s+[^,]+,\s*[A-Z]/)) {
+            formatted = formatted.replace(/((?:Hi|Hello|Dear)\s+[^,]+,)\s*([A-Z])/gi, '$1\n\n$2');
         }
         
-        // Clean up any excessive line breaks (more than 3 consecutive)
-        formatted = formatted.replace(/\r\n\r\n\r\n\r\n+/g, '\r\n\r\n\r\n');
-        
-        // Final cleanup - remove any leading/trailing whitespace
-        formatted = formatted.trim();
-        
-        console.log('[formatTextForOutlook] Original:', JSON.stringify(text));
-        console.log('[formatTextForOutlook] Formatted:', JSON.stringify(formatted));
+        console.debug('formatTextForDisplay - Original:', JSON.stringify(text));
+        console.debug('formatTextForDisplay - Formatted:', JSON.stringify(formatted));
         
         return formatted;
     }
 
-    insertResponseAsHtml(responseText) {
-        const htmlContent = this.convertTextToHtml(responseText);
-        
-        if (typeof Office.context.mailbox.item.body.setSelectedDataAsync === 'function') {
-            Office.context.mailbox.item.body.setSelectedDataAsync(
-                htmlContent,
-                { coercionType: Office.CoercionType.Html },
-                (result) => {
-                    if (result.status === Office.AsyncResultStatus.Succeeded) {
-                        this.uiController.showStatus('Response inserted as HTML.');
-                    } else {
-                        console.error('[InsertResponse] HTML setSelectedDataAsync error:', result);
-                        this.insertResponseFallback(htmlContent);
-                    }
-                }
-            );
-        } else {
-            this.insertResponseFallback(htmlContent);
-        }
-    }
-
-    insertResponseFallback(htmlContent) {
-        Office.context.mailbox.item.body.setAsync(
-            htmlContent,
-            { coercionType: Office.CoercionType.Html },
-            (result) => {
-                if (result.status === Office.AsyncResultStatus.Succeeded) {
-                    this.uiController.showStatus('Response inserted into email body.');
-                } else {
-                    console.error('[InsertResponse] setAsync error:', result);
-                    this.uiController.showError('Failed to insert response into email.');
-                }
-            }
-        );
-    }
-
     /**
-     * Converts plain text to HTML, preserving line breaks and paragraphs
-     * @param {string} text - Plain text to convert
-     * @returns {string} HTML formatted text
+     * Format text for clipboard with proper line breaks and paragraph spacing
+     * @param {string} text - The text to format
+     * @returns {string} Formatted text with proper spacing
      */
-    convertTextToHtml(text) {
-        // Escape HTML entities first
-        let html = text
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
+    formatTextForClipboard(text) {
+        // Start with the cleaned text
+        let formatted = text.trim();
         
-        // Split by double line breaks to identify paragraphs
-        const paragraphs = html.split(/\n\s*\n/);
-        const htmlParagraphs = [];
+        // Remove any existing tabs and excessive spaces
+        formatted = formatted.replace(/\t+/g, ' ');
+        formatted = formatted.replace(/[ ]{2,}/g, ' ');
         
-        for (let paragraph of paragraphs) {
-            const trimmed = paragraph.trim();
-            if (trimmed) {
-                // Replace single line breaks with <br> and wrap in <p> with Outlook-friendly styling
-                const formattedParagraph = trimmed.replace(/\n/g, '<br>');
-                htmlParagraphs.push(`<p style="margin-top: 0; margin-bottom: 1em; line-height: 1.5;">${formattedParagraph}</p>`);
-            }
+        // Normalize line endings to \n
+        formatted = formatted.replace(/\r\n?/g, '\n');
+        
+        // If the text doesn't already have proper paragraph breaks, add them
+        if (!formatted.includes('\n\n')) {
+            // Add breaks after common greetings
+            formatted = formatted.replace(/((?:Hi|Hello|Dear)\s+[^,]+,)\s*/gi, '$1\n\n');
+            
+            // Add breaks before common closings
+            formatted = formatted.replace(/\s*((?:Best\s+)?(?:regards?|sincerely|thanks?|cheers),?\s*\n?\s*[\w\s]+)$/gi, '\n\n$1');
+            
+            // Add breaks after sentences that are likely to end paragraphs
+            formatted = formatted.replace(/([.!?])\s+([A-Z][a-z])/g, '$1\n\n$2');
+            
+            // Clean up any triple+ line breaks
+            formatted = formatted.replace(/\n{3,}/g, '\n\n');
         }
         
-        // If no paragraphs detected, treat as single paragraph
-        if (htmlParagraphs.length === 0 && html.trim()) {
-            const formattedText = html.trim().replace(/\n/g, '<br>');
-            htmlParagraphs.push(`<p style="margin-top: 0; margin-bottom: 1em; line-height: 1.5;">${formattedText}</p>`);
-        }
+        // Ensure signature is on its own line
+        formatted = formatted.replace(/([.!?])\s*((?:Best\s+)?(?:regards?|sincerely|thanks?|cheers),?)\s*([A-Z][\w\s]+)$/gi, '$1\n\n$2\n$3');
         
-        // Create the final HTML
-        const finalHtml = htmlParagraphs.join('');
+        // Final cleanup
+        formatted = formatted.trim();
         
-        console.log('[convertTextToHtml] Converted HTML:', finalHtml);
-        return finalHtml;
+        console.debug('[formatTextForClipboard] Original:', JSON.stringify(text));
+        console.debug('[formatTextForClipboard] Formatted:', JSON.stringify(formatted));
+        
+        return formatted;
     }
 
     showRefineButton() {
         document.getElementById('refine-response').classList.remove('hidden');
     }
 
-    onModelServiceChange(event) {
+    async onModelServiceChange(event) {
+        console.debug('[DEBUG] onModelServiceChange triggered:', {
+            value: event.target.value,
+            oldValue: event.target.dataset.oldValue || 'undefined'
+        });
+        
         const customEndpoint = document.getElementById('custom-endpoint');
         if (customEndpoint) {
             if (event.target.value === 'custom') {
@@ -966,7 +1107,15 @@ class TaskpaneApp {
                 customEndpoint.classList.add('hidden');
             }
         }
-        this.saveSettings();
+        
+        // Store old value for next time
+        event.target.dataset.oldValue = event.target.value;
+        
+        // Update model dropdown first (this will set default model and save settings)
+        await this.updateModelDropdown();
+        
+        console.debug('[DEBUG] About to save settings after model service change');
+        await this.saveSettings();
     }
 
     openSettings() {
@@ -987,7 +1136,7 @@ class TaskpaneApp {
         this.saveSettings();
     }
 
-    loadSettingsIntoUI() {
+    async loadSettingsIntoUI() {
         const settings = this.settingsManager.getSettings();
 
         // Load form values
@@ -1016,6 +1165,22 @@ class TaskpaneApp {
             baseUrlInput.value = 'http://localhost:11434';
         }
 
+        // If no model-service is set, default to the first available option and save it
+        const modelServiceSelect = document.getElementById('model-service');
+        if (modelServiceSelect && (!settings['model-service'] || !modelServiceSelect.value)) {
+            if (modelServiceSelect.options.length > 0) {
+                const firstOption = modelServiceSelect.options[0].value;
+                modelServiceSelect.value = firstOption;
+                console.debug(`[TaskPane-${this.instanceId}] Setting default model-service to: ${firstOption}`);
+                
+                // Save this default to settings
+                const updatedSettings = this.settingsManager.getSettings();
+                updatedSettings['model-service'] = firstOption;
+                await this.settingsManager.saveSettings(updatedSettings);
+                console.debug(`[TaskPane-${this.instanceId}] Saved default model-service to settings: ${firstOption}`);
+            }
+        }
+
         // Trigger change events
         if (settings['model-service']) {
             document.getElementById('model-service').dispatchEvent(new Event('change'));
@@ -1035,18 +1200,49 @@ class TaskpaneApp {
         
         // Collect all form values
         const inputs = document.querySelectorAll('input, select, textarea');
-        inputs.forEach(input => {
+        console.debug('[DEBUG] saveSettings: Found', inputs.length, 'form elements');
+        
+        inputs.forEach((input, index) => {
             if (input.id) {
-                settings[input.id] = input.type === 'checkbox' ? input.checked : input.value;
+                const value = input.type === 'checkbox' ? input.checked : input.value;
+                settings[input.id] = value;
+                
+                if (input.id === 'model-service') {
+                    console.debug('[DEBUG] model-service element details:', {
+                        index: index,
+                        id: input.id,
+                        type: input.type,
+                        value: input.value,
+                        selectedIndex: input.selectedIndex,
+                        options: input.options ? Array.from(input.options).map(opt => opt.value) : 'N/A',
+                        settingsValue: value
+                    });
+                }
             }
         });
         
+        console.debug('[DEBUG] saveSettings collected:', settings);
         this.settingsManager.saveSettings(settings);
     }
 
     getUserId() {
         // In a real implementation, this would get the actual user ID
         return Office.context.mailbox.userProfile.emailAddress || 'unknown';
+    }
+
+    /**
+     * Extract the first recipient email address for telemetry context
+     * @returns {string|null} First recipient email or null
+     */
+    getRecipientEmailForTelemetry() {
+        if (!this.currentEmail?.recipients) {
+            return null;
+        }
+        
+        // Parse recipient string to extract email addresses
+        // Recipients format: "To: Name <email@domain.com>, Name2 <email2@domain.com>"
+        const recipientMatch = this.currentEmail.recipients.match(/<([^>]+)>/);
+        return recipientMatch ? recipientMatch[1] : null;
     }
 }
 

@@ -175,16 +175,16 @@ Production build includes:
 Deploy to your configured environment:
 ```bash
 # Deploy to development environment
-.\tools\build_and_deploy.ps1 -Environment Dev
+.\tools\deploy_web_assets.ps1 -Environment Dev
 
 # Deploy to production environment  
-.\tools\build_and_deploy.ps1 -Environment Prd
+.\tools\deploy_web_assets.ps1 -Environment Prd
 
 # Dry run to preview changes
-.\tools\build_and_deploy.ps1 -Environment Dev -DryRun
+.\tools\deploy_web_assets.ps1 -Environment Dev -DryRun
 
 # Force deployment (skips validation)
-.\tools\build_and_deploy.ps1 -Environment Prd -Force
+.\tools\deploy_web_assets.ps1 -Environment Prd -Force
 ```
 
 ### 5. Manifest Validation
@@ -308,6 +308,33 @@ aiService.callAI('Hello, test message', {
 - **Rate limiting**: Monitor API quotas and limits
 
 ## Troubleshooting
+
+### Critical Office Configuration Issues
+
+#### Add-in Button Not Appearing (Most Common Issue)
+
+**❗ CRITICAL: Optional Connected Experiences**
+The #1 cause of add-in buttons not appearing is disabled "Optional Connected Experiences":
+
+1. **Location**: File → Options → Trust Center → Trust Center Settings → Privacy Options
+2. **Setting**: "Optional connected experiences" must be **ENABLED**
+3. **Impact**: When disabled, ALL web-based add-ins will fail to load with no error messages
+4. **Solution**: Re-enable the setting and restart Outlook
+
+**Other Office Settings That Break Add-ins:**
+
+1. **Add-in Trust Settings**:
+   - Location: File → Options → Trust Center → Trust Center Settings → Add-ins
+   - Uncheck "Require Application Add-ins to be signed by Trusted Publisher" (for development)
+   - Uncheck "Disable all Application Add-ins"
+
+2. **Internet Zone Security**:
+   - Overly restrictive internet security can block external URLs
+   - Add your S3 domain to trusted sites if needed
+
+3. **Macro Security Settings**:
+   - Can sometimes interfere with add-in initialization
+   - Set to "Disable all macros with notification" or less restrictive
 
 ### Common Development Issues
 
@@ -437,7 +464,7 @@ class TaskpaneApp {
 - Provides email context for AI analysis
 
 #### AIService Architecture  
-- **Multi-provider support**: OpenAI, Anthropic, Azure, Ollama, Custom
+- **Multi-provider support**: OpenAI-compatible, Ollama, Custom on-site providers
 - **Dynamic model discovery**: Automatic Ollama model detection
 - **Response parsing**: Provider-specific response handling
 - **Error handling**: Comprehensive error recovery and user feedback
@@ -878,7 +905,7 @@ Maintain clear release notes for each deployment:
 ## Version 1.2.3 (2025-01-15)
 
 ### Added
-- New Anthropic Claude model support
+- Enhanced Ollama local model support
 - Enhanced accessibility features
 
 ### Fixed  
@@ -914,10 +941,9 @@ outlook_email_assistant_v3/
 
 ### Supported AI Services
 
-- **OpenAI**: Set service to 'openai', provide API key
-- **Anthropic**: Set service to 'anthropic', provide API key  
-- **Azure OpenAI**: Set service to 'azure', provide endpoint URL and API key
-- **Custom**: Set service to 'custom', provide endpoint URL
+- **OpenAI-Compatible**: Set service to 'openai', provide API key
+- **Ollama**: Set service to 'ollama', typically no API key required for local installations
+- **Custom On-Site Providers**: Set service to 'custom', provide endpoint URL and credentials as needed
 
 ### Environment Variables (Optional)
 
