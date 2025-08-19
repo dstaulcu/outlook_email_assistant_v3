@@ -196,7 +196,7 @@
         <aside id="settings-panel" class="settings-panel hidden" aria-labelledby="settings-title">
             <h2 id="settings-title">Settings</h2>
 
-            <div class="settings-group">
+            <form class="settings-group">
                 <h3>AI Configuration</h3>
                 <div class="config-group">
                     <label for="model-service">Model Service:</label>
@@ -215,12 +215,24 @@
                 </div>
 
                 <div class="config-group">
-                    <label for="api-key">API Key:</label>
+                    <div class="field-with-help">
+                        <label for="api-key">API Key <span id="api-key-provider-label">(Current Provider)</span>:</label>
+                        <button type="button" id="api-key-help-btn" class="help-btn" aria-label="Get help with API key" title="Get help with API key">
+                            <span aria-hidden="true">❓</span>
+                        </button>
+                    </div>
                     <input type="password" id="api-key" class="form-control" 
                            placeholder="Enter your API key" aria-describedby="api-key-help">
-                    <small id="api-key-help" class="help-text">Your API key is stored securely in your browser and never logged or sent to third parties.</small>
+                    <small id="api-key-help" class="help-text">Your API key is stored securely per provider and never logged or sent to third parties.</small>
                 </div>
-            </div>
+
+                <div class="config-group">
+                    <label for="endpoint-url">Endpoint URL <span id="endpoint-url-provider-label">(Current Provider)</span>:</label>
+                    <input type="url" id="endpoint-url" class="form-control" 
+                           placeholder="Enter custom endpoint URL (optional)" aria-describedby="endpoint-url-help">
+                    <small id="endpoint-url-help" class="help-text">Leave blank to use the default endpoint for this provider. Custom endpoints are stored per provider.</small>
+                </div>
+            </form>
 
             <div class="settings-group">
                 <h3>Accessibility</h3>
@@ -252,6 +264,9 @@
             <button id="open-settings" class="btn-link" type="button" aria-label="Open Settings">
                 <span aria-hidden="true">⚙️</span> Settings
             </button>
+            <a id="github-link" href="#" class="btn-link" target="_blank" rel="noopener noreferrer" aria-label="View source code on GitHub">
+                <span aria-hidden="true">📱</span> Source & Issues
+            </a>
             <span class="version">v1.0.0</span>
         </footer>
     </div>

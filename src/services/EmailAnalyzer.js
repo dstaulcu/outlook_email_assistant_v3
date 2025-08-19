@@ -153,6 +153,11 @@ export class EmailAnalyzer {
                     hasAttachments: (item.attachments && item.attachments.length > 0),
                     itemType: item.itemType,
                     conversationId: item.conversationId,
+                    // Additional Office.js identifiers for telemetry (non-content-revealing)
+                    itemId: item.itemId || null,
+                    hasInternetMessageId: !!item.internetMessageId,
+                    itemClass: item.itemClass || null,
+                    normalizedSubject: item.normalizedSubject || null,
                     sender: userProfile ? `${userProfile.displayName || 'Unknown'} <${userProfile.emailAddress || 'unknown@domain.com'}>` : 'Unknown Sender'
                 };
 

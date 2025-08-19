@@ -1,16 +1,103 @@
 {
+  "_config": {
+    "defaultProvider": "ollama",
+    "fallbackModel": "llama3:latest",
+    "fallbackBaseUrl": "http://localhost:11434/v1",
+    "githubRepository": "https://github.com/dstaulcu/outlook_email_assistant_v3",
+    "description": "Global configuration - defaultProvider is used when no provider is selected, fallbackModel is used when provider config is unavailable, fallbackBaseUrl is used when no endpoint is configured"
+  },
   "ollama": {
     "label": "Ollama (Local)",
     "baseUrl": "http://localhost:11434",
-    "supportedClassifications": ["UNCLASSIFIED", "CONFIDENTIAL"],
-    "maxClassificationLevel": 1,
+    "defaultModel": "llama3:latest",
+    "helpUrl": "https://ollama.ai/download",
+    "helpText": "Install Ollama locally - no API key needed",
+    "knownModels": [
+      "llama3:latest",
+      "llama3:8b",
+      "llama3:13b",
+      "llama3:70b",
+      "llama2:latest",
+      "llama2:7b",
+      "llama2:13b",
+      "llama2:70b",
+      "codellama:latest",
+      "codellama:7b",
+      "codellama:13b",
+      "mistral:latest",
+      "mixtral:latest",
+      "phi3:latest",
+      "gemma:latest",
+      "qwen2:latest"
+    ],
+    "supportedClassifications": [
+      "UNCLASSIFIED",
+      "CONFIDENTIAL",
+      "SECRET"
+    ],
     "classificationNote": "Local processing - suitable for CONFIDENTIAL and below"
   },
   "openai": {
     "label": "OpenAI",
     "baseUrl": "https://api.openai.com/v1",
-    "supportedClassifications": ["UNCLASSIFIED"],
-    "maxClassificationLevel": 0,
+    "defaultModel": "gpt-4",
+    "helpUrl": "https://platform.openai.com/api-keys",
+    "helpText": "Get your OpenAI API key from the OpenAI Platform",
+    "knownModels": [
+      "gpt-4",
+      "gpt-4o",
+      "gpt-4o-mini",
+      "gpt-4-turbo",
+      "gpt-4-turbo-preview",
+      "gpt-3.5-turbo",
+      "gpt-3.5-turbo-16k",
+      "gpt-3.5-turbo-instruct"
+    ],
+    "maxTokens": 4000,
+    "supportedClassifications": [
+      "UNCLASSIFIED"
+    ],
+    "classificationNote": "Cloud service - UNCLASSIFIED content only"
+  },
+  "onsite1": {
+    "label": "onsite1",
+    "baseUrl": "https://api.openai.com/v1",
+    "defaultModel": "gpt-4",
+    "helpUrl": "https://your-organization.com/ai-services/api-keys",
+    "helpText": "Contact your system administrator for API key and configuration details",
+    "knownModels": [
+      "gpt-4",
+      "gpt-4o",
+      "gpt-4o-mini",
+      "gpt-4-turbo",
+      "gpt-3.5-turbo",
+      "custom-model-1",
+      "custom-model-2"
+    ],
+    "maxTokens": 4000,
+    "supportedClassifications": [
+      "UNCLASSIFIED"
+    ],
+    "classificationNote": "Cloud service - UNCLASSIFIED content only"
+  },
+  "onsite2": {
+    "label": "onsite2",
+    "baseUrl": "https://api.openai.com/v1",
+    "defaultModel": "gpt-4",
+    "helpUrl": "https://your-organization.com/enterprise-ai/documentation",
+    "helpText": "Contact your system administrator for API key and configuration details",
+    "knownModels": [
+      "gpt-4",
+      "gpt-4o",
+      "gpt-4-turbo",
+      "gpt-3.5-turbo",
+      "enterprise-model-1",
+      "enterprise-model-2"
+    ],
+    "maxTokens": 4000,
+    "supportedClassifications": [
+      "UNCLASSIFIED"
+    ],
     "classificationNote": "Cloud service - UNCLASSIFIED content only"
   }
 }

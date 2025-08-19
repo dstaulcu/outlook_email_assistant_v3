@@ -15,32 +15,85 @@ export class AIService {
             case 'openai':
                 return data.choices?.[0]?.message?.content || '';
             case 'ollama':
-                // Ollama returns response in data.message.content
-                return data.message?.content || data.response || data.text || JSON.stringify(data);
+                // Ollama returns response in data.message.content or data.response
+                const content = data.message?.content || data.response || data.text || '';
+                
+                // Handle empty responses from Ollama
+                if (!content || content.trim() === '') {
+                    if (data.done_reason === 'load') {
+                        throw new Error('Model is still loading. Please try again in a moment.');
+                    }
+                    if (data.done && data.response === '') {
+                        throw new Error('AI service returned an empty response. Please try again.');
+                    }
+                    throw new Error('No response content received from AI service.');
+                }
+                
+                return content;
             default:
-                // Fallback: try common OpenAI-compatible fields or stringify
-                return data.choices?.[0]?.message?.content || data.response || data.text || data.content || JSON.stringify(data);
+                // Fallback: try common OpenAI-compatible fields
+                const fallbackContent = data.choices?.[0]?.message?.content || data.response || data.text || data.content || '';
+                if (!fallbackContent || fallbackContent.trim() === '') {
+                    throw new Error('No response content received from AI service.');
+                }
+                return fallbackContent;
         }
     }
-    constructor() {
-        this.supportedServices = {
-            openai: {
-                endpoint: 'https://api.openai.com/v1/chat/completions',
-                model: 'gpt-4',
-                maxTokens: 4000
-            },
-            ollama: {
-                endpoint: 'http://localhost:11434/api/chat', // Default Ollama base_url
-                model: 'llama2', // Default Ollama model
-                apiKey: '', // Ollama does not require apiKey by default
-                maxTokens: 4000
-            },
-            custom: {
-                endpoint: '', // Will be set from configuration - supports OnSiteProvider-1, OnSiteProvider-2, etc.
-                model: 'gpt-4',
-                maxTokens: 4000
-            }
-        };
+    constructor(providersConfig = null) {
+        // Store provider configuration from ai-providers.json
+        this.providersConfig = providersConfig || {};
+    }
+
+    /**
+     * Updates the provider configuration (for dynamic loading)
+     * @param {Object} providersConfig - Provider configuration from ai-providers.json
+     */
+    updateProvidersConfig(providersConfig) {
+        this.providersConfig = providersConfig || {};
+        console.debug('Updated AIService provider config:', this.providersConfig);
+    }
+
+    /**
+     * Gets the default model for a service from provider config or fallback
+     * @param {string} service - AI service name
+     * @param {Object} config - Configuration that might contain a model override
+     * @returns {string} Model name to use
+     */
+    getDefaultModel(service, config = {}) {
+        // Priority order: user config.model > provider defaultModel > hardcoded fallback
+        if (config.model && config.model.trim()) {
+            return config.model.trim();
+        }
+        
+        const providerConfig = this.providersConfig[service];
+        if (providerConfig && providerConfig.defaultModel) {
+            return providerConfig.defaultModel;
+        }
+        
+        // Configurable fallback from global config, or ultimate hardcoded fallback for internal deployments
+        return this.providersConfig?._config?.fallbackModel || 'llama3:latest';
+    }
+
+    /**
+     * Gets the max tokens setting for a service from provider config
+     * @param {string} service - AI service name
+     * @param {Object} config - Configuration that might contain overrides
+     * @returns {number|undefined} Max tokens to use, or undefined to let the service decide
+     */
+    getMaxTokens(service, config = {}) {
+        // Priority order: user config.maxTokens > provider maxTokens > undefined (let service decide)
+        if (config.maxTokens && typeof config.maxTokens === 'number') {
+            return config.maxTokens;
+        }
+        
+        const providerConfig = this.providersConfig[service];
+        if (providerConfig && providerConfig.maxTokens && typeof providerConfig.maxTokens === 'number') {
+            return providerConfig.maxTokens;
+        }
+        
+        // Return undefined to let the service use its own defaults
+        // This is better than hardcoding values that might not be appropriate for all models
+        return undefined;
     }
 
     /**
@@ -296,15 +349,35 @@ Format your response as JSON with the following structure:
         let settingsInstructions = '';
         
         if (responseSettings) {
-            const lengthMap = { '1': 'brief', '2': 'moderate', '3': 'detailed' };
-            const toneMap = { '1': 'formal', '2': 'professional', '3': 'friendly' };
-            const urgencyMap = { '1': 'low urgency', '2': 'normal urgency', '3': 'high urgency' };
+            const lengthMap = {
+                1: 'very brief (1-2 sentences)',
+                2: 'brief (1 short paragraph)',
+                3: 'medium length (2-3 paragraphs)',
+                4: 'detailed (3-4 paragraphs)',
+                5: 'very detailed (4+ paragraphs)'
+            };
+
+            const toneMap = {
+                1: 'very casual and friendly',
+                2: 'casual but respectful',
+                3: 'professional and courteous',
+                4: 'formal and business-like',
+                5: 'very formal and ceremonious'
+            };
+
+            const urgencyMap = {
+                1: 'relaxed, no rush',
+                2: 'calm and measured',
+                3: 'appropriate responsiveness',
+                4: 'prompt and attentive',
+                5: 'urgent and immediate'
+            };
             
             settingsInstructions = `
 **Response Settings to Apply:**
-- Length: ${lengthMap[responseSettings['response-length']] || 'moderate'}
-- Tone: ${toneMap[responseSettings['response-tone']] || 'professional'}  
-- Urgency: ${urgencyMap[responseSettings['response-urgency']] || 'normal urgency'}`;
+- Length: ${lengthMap[responseSettings.length] || 'medium length'}
+- Tone: ${toneMap[responseSettings.tone] || 'professional and courteous'}  
+- Urgency: ${urgencyMap[responseSettings.urgency] || 'appropriate responsiveness'}`;
         }
 
         const userInstructions = instructions.trim() 
@@ -351,24 +424,15 @@ Provide only the email body text that should be sent.`;
             return this.callCustomEndpoint(prompt, config);
         }
 
-        const serviceConfig = this.supportedServices[service];
-        if (!serviceConfig) {
+        // Validate supported service
+        const supportedServices = ['openai', 'ollama', 'azure'];
+        if (!supportedServices.includes(service)) {
             console.error(`[AIService] Unsupported AI service: ${service}`);
             throw new Error(`Unsupported AI service: ${service}`);
         }
-        console.debug('Service config:', serviceConfig);
 
-        let endpoint = serviceConfig.endpoint;
-        if (service === 'azure' && config.endpointUrl) {
-            endpoint = config.endpointUrl;
-            console.debug('Using Azure custom endpoint:', endpoint);
-        }
-        if (service === 'ollama' && config.baseUrl) {
-            // Always use /api/chat or /api/generate, not the base URL
-            const base = config.baseUrl.replace(/\/$/, '');
-            endpoint = `${base}/api/chat`;
-            console.debug('Using Ollama endpoint:', endpoint);
-        }
+        // Build endpoint using provider configuration and user overrides
+        let endpoint = this.buildEndpoint(service, config);
         console.debug('Final endpoint:', endpoint);
 
         let requestBody;
@@ -376,7 +440,7 @@ Provide only the email body text that should be sent.`;
 
         if (service === 'ollama') {
             requestBody = {
-                model: config.model || serviceConfig.model,
+                model: this.getDefaultModel(service, config),
                 messages: [{ role: 'user', content: prompt }],
                 stream: false
             };
@@ -401,13 +465,29 @@ Provide only the email body text that should be sent.`;
 
         // Fallback to /api/generate if /api/chat fails with 405
         if (service === 'ollama' && response.status === 405) {
-            const base = config.baseUrl.replace(/\/$/, '');
-            const fallbackEndpoint = `${base}/api/generate`;
+            // Build fallback endpoint using the same base URL but with /api/generate
+            let baseUrl = '';
+            const providerConfig = this.providersConfig[service];
+            if (providerConfig && providerConfig.baseUrl) {
+                baseUrl = providerConfig.baseUrl.replace(/\/$/, '');
+            } else {
+                baseUrl = config.baseUrl || 'http://localhost:11434';
+            }
+            
+            const fallbackEndpoint = `${baseUrl}/api/generate`;
             console.warn('Ollama /api/chat failed with 405, retrying with /api/generate:', fallbackEndpoint);
+            
+            // For /api/generate, we need to restructure the request body
+            const generateRequestBody = {
+                model: requestBody.model,
+                prompt: requestBody.messages[0].content, // Extract prompt from messages array
+                stream: false
+            };
+            
             response = await fetch(fallbackEndpoint, {
                 method: 'POST',
                 headers: headers,
-                body: JSON.stringify(requestBody)
+                body: JSON.stringify(generateRequestBody)
             });
             console.debug(`[AIService] Fallback response status: ${response.status} ${response.statusText}`);
         }
@@ -429,6 +509,43 @@ Provide only the email body text that should be sent.`;
     }
 
     /**
+     * Builds the endpoint URL for an AI service using provider config and user overrides
+     * @param {string} service - AI service name
+     * @param {Object} config - Configuration including user overrides
+     * @returns {string} Complete endpoint URL
+     */
+    buildEndpoint(service, config) {
+        // Priority order: user endpointUrl > provider baseUrl > hardcoded fallback
+        let baseUrl = '';
+        
+        // 1. Check if user provided a custom endpointUrl
+        if (config.endpointUrl && config.endpointUrl.trim()) {
+            return config.endpointUrl.trim();
+        }
+        
+        // 2. Check provider configuration from ai-providers.json
+        const providerConfig = this.providersConfig[service];
+        if (providerConfig && providerConfig.baseUrl) {
+            baseUrl = providerConfig.baseUrl.replace(/\/$/, '');
+        } else {
+            // 3. Fallback to configured fallback URL
+            baseUrl = this.providersConfig?._config?.fallbackBaseUrl || 'http://localhost:11434/v1';
+        }
+        
+        // Build service-specific endpoint path
+        switch (service) {
+            case 'openai':
+                return `${baseUrl}/chat/completions`;
+            case 'ollama':
+                return `${baseUrl}/api/chat`;
+            case 'azure':
+                return baseUrl; // Azure endpoints are usually complete
+            default:
+                return baseUrl;
+        }
+    }
+
+    /**
      * Calls a custom AI endpoint
      * @param {string} prompt - The prompt
      * @param {Object} config - Configuration
@@ -441,9 +558,14 @@ Provide only the email body text that should be sent.`;
 
         const requestBody = {
             prompt: prompt,
-            max_tokens: 4000,
             temperature: 0.7
         };
+
+        // Only include max_tokens if configured
+        const maxTokens = this.getMaxTokens('custom', config);
+        if (maxTokens !== undefined) {
+            requestBody.max_tokens = maxTokens;
+        }
 
         const headers = {
             'Content-Type': 'application/json'
@@ -477,13 +599,13 @@ Provide only the email body text that should be sent.`;
      * @returns {Object} Request body
      */
     buildRequestBody(prompt, service, config) {
-        const serviceConfig = this.supportedServices[service];
+        const maxTokens = this.getMaxTokens(service, config);
         
         switch (service) {
             case 'openai':
             case 'custom':
-                return {
-                    model: config.model || serviceConfig.model,
+                const openaiBody = {
+                    model: this.getDefaultModel(service, config),
                     messages: [
                         {
                             role: 'system',
@@ -494,14 +616,19 @@ Provide only the email body text that should be sent.`;
                             content: prompt
                         }
                     ],
-                    max_tokens: serviceConfig.maxTokens,
                     temperature: 0.7
                 };
                 
+                // Only include max_tokens if configured
+                if (maxTokens !== undefined) {
+                    openaiBody.max_tokens = maxTokens;
+                }
+                
+                return openaiBody;
+                
             case 'ollama':
-                return {
-                    model: config.model || serviceConfig.model,
-                    max_tokens: serviceConfig.maxTokens,
+                const ollamaBody = {
+                    model: this.getDefaultModel(service, config),
                     messages: [
                         {
                             role: 'user',
@@ -510,6 +637,13 @@ Provide only the email body text that should be sent.`;
                     ],
                     temperature: 0.7
                 };
+                
+                // Ollama doesn't typically use max_tokens, but include it if explicitly configured
+                if (maxTokens !== undefined) {
+                    ollamaBody.max_tokens = maxTokens;
+                }
+                
+                return ollamaBody;
                 
             default:
                 throw new Error(`Unsupported service for request body: ${service}`);

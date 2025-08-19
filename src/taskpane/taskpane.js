@@ -22,17 +22,6 @@ class TaskpaneApp {
             return {};
         }
     }
-    async fetchDefaultModelsConfig() {
-        // Fetch ai-models.json from public config directory
-        try {
-            const response = await fetch('/config/ai-models.json');
-            if (!response.ok) throw new Error('Failed to fetch ai-models.json');
-            return await response.json();
-        } catch (e) {
-            console.warn('[Default Models] Could not load ai-models.json:', e);
-            return {};
-        }
-    }
 
     switchToResponseTab() {
         // Switch to the response tab in the UI
@@ -67,6 +56,8 @@ class TaskpaneApp {
         this.currentEmail = null;
         this.currentAnalysis = null;
         this.currentResponse = null;
+        this.pendingAction = null; // Track what action user wants after warning override
+        this.classificationOverrideGranted = false; // Track if user has already overridden classification for current email
         this.sessionStartTime = Date.now();
         
         // Telemetry tracking properties
@@ -77,6 +68,40 @@ class TaskpaneApp {
         this.modelServiceSelect = null;
         this.modelSelectGroup = null;
         this.modelSelect = null;
+        
+        // Set up session end tracking
+        this.setupSessionTracking();
+    }
+
+    setupSessionTracking() {
+        // Track when user navigates away or closes the taskpane
+        window.addEventListener('beforeunload', () => {
+            this.logSessionSummary();
+        });
+        
+        // Track when the taskpane loses focus (user switches to another part of Outlook)
+        window.addEventListener('blur', () => {
+            // Log session summary with a slight delay to allow for quick focus changes
+            setTimeout(() => {
+                if (!document.hasFocus()) {
+                    this.logSessionSummary();
+                }
+            }, 1000);
+        });
+    }
+
+    logSessionSummary() {
+        if (this.sessionSummaryLogged) return; // Prevent duplicate logging
+        this.sessionSummaryLogged = true;
+        
+        const sessionDuration = Date.now() - this.sessionStartTime;
+        this.logger.logEvent('session_summary', {
+            session_duration_ms: sessionDuration,
+            refinement_count: this.refinementCount,
+            clipboard_used: this.hasUsedClipboard,
+            email_analyzed: this.currentEmail !== null,
+            response_generated: this.currentResponse !== null
+        }, 'Information', this.getRecipientEmailForTelemetry());
     }
 
     async initialize() {
@@ -87,8 +112,19 @@ class TaskpaneApp {
             // Load user settings
             await this.settingsManager.loadSettings();
             
+            // Apply accessibility settings immediately after loading
+            const currentSettings = await this.settingsManager.getSettings();
+            if (currentSettings['high-contrast']) {
+                console.debug('Applying high contrast during initialization');
+                this.toggleHighContrast(true);
+            }
+            
             // Load provider config before UI setup
             this.defaultProvidersConfig = await this.fetchDefaultProvidersConfig();
+            
+            // Update AIService with provider configuration
+            this.aiService.updateProvidersConfig(this.defaultProvidersConfig);
+            
             // Setup UI
             await this.setupUI();
             
@@ -171,12 +207,11 @@ class TaskpaneApp {
         this.modelServiceSelect = document.getElementById('model-service');
         this.modelSelectGroup = document.getElementById('model-select-group');
         this.modelSelect = document.getElementById('model-select');
-        this.baseUrlInput = document.getElementById('base-url');
         
         // Populate model service dropdown from defaultProvidersConfig BEFORE loading settings
         if (this.modelServiceSelect && this.defaultProvidersConfig) {
             this.modelServiceSelect.innerHTML = Object.entries(this.defaultProvidersConfig)
-                .filter(([key, val]) => key !== 'custom')
+                .filter(([key, val]) => key !== 'custom' && key !== '_config')
                 .map(([key, val]) => `<option value="${key}">${val.label}</option>`)
                 .join('');
         }
@@ -224,6 +259,11 @@ class TaskpaneApp {
         // Settings
         document.getElementById('open-settings').addEventListener('click', () => this.openSettings());
         document.getElementById('close-settings').addEventListener('click', () => this.closeSettings());
+        document.getElementById('reset-settings').addEventListener('click', () => this.resetSettings());
+        
+        // Help and GitHub links
+        document.getElementById('api-key-help-btn').addEventListener('click', () => this.showProviderHelp());
+        document.getElementById('github-link').addEventListener('click', (e) => this.openGitHubRepository(e));
         
         // Model service change
         document.getElementById('model-service').addEventListener('change', (e) => this.onModelServiceChange(e));
@@ -232,11 +272,19 @@ class TaskpaneApp {
         document.getElementById('high-contrast').addEventListener('change', (e) => this.toggleHighContrast(e.target.checked));
         document.getElementById('screen-reader-mode').addEventListener('change', (e) => this.toggleScreenReaderMode(e.target.checked));
         
-        // Auto-save settings
-        ['api-key', 'endpoint-url', 'custom-instructions'].forEach(id => {
+        // Auto-save settings with special handling for provider-specific fields
+        ['custom-instructions'].forEach(id => {
             const element = document.getElementById(id);
             if (element) {
                 element.addEventListener('blur', () => this.saveSettings());
+            }
+        });
+        
+        // Special handling for provider-specific fields (API key and endpoint URL)
+        ['api-key', 'endpoint-url'].forEach(id => {
+            const element = document.getElementById(id);
+            if (element) {
+                element.addEventListener('blur', () => this.saveCurrentProviderSettings(this.modelServiceSelect?.value));
             }
         });
     }
@@ -290,14 +338,15 @@ class TaskpaneApp {
     async loadCurrentEmail() {
         try {
             this.currentEmail = await this.emailAnalyzer.getCurrentEmail();
-            this.displayEmailSummary(this.currentEmail);
+            this.classificationOverrideGranted = false; // Reset override flag for new email
+            await this.displayEmailSummary(this.currentEmail);
         } catch (error) {
             console.error('Failed to load current email:', error);
             this.uiController.showError('Failed to load email. Please select an email and try again.');
         }
     }
 
-    displayEmailSummary(email) {
+    async displayEmailSummary(email) {
         console.debug('Displaying email summary:', email);
         
         // Only update the fields we're actually showing
@@ -317,11 +366,16 @@ class TaskpaneApp {
             
             if (classificationResult.detected) {
                 classificationText = classificationResult.text;
-                classificationColor = classificationResult.color;
                 
-                // Show detailed classification info if markings were found
-                if (classificationResult.markings && classificationResult.markings.length > 0) {
-                    classificationText += ` (${classificationResult.markings.length} marking${classificationResult.markings.length > 1 ? 's' : ''} found)`;
+                // Only show warning color if classification is not supported by provider
+                const isSupportedByProvider = await this.isClassificationSupportedByProvider(classificationResult.text);
+                classificationColor = isSupportedByProvider ? 'green' : classificationResult.color;
+                
+                // Symmetrical classification messaging
+                if (isSupportedByProvider) {
+                    classificationText += ' - Safe for AI processing';
+                } else {
+                    classificationText += ' - Potentially unsafe for AI processing';
                 }
             } else {
                 classificationText = 'UNCLASSIFIED - Safe for AI processing';
@@ -490,6 +544,13 @@ class TaskpaneApp {
         const classification = this.classificationDetector.detectClassification(this.currentEmail.body);
         console.debug('Email classification check:', classification);
         
+        // Skip classification checks if user has already overridden for this email
+        if (this.classificationOverrideGranted) {
+            console.debug('Classification override already granted, proceeding with analysis');
+            await this.performAnalysis();
+            return;
+        }
+        
         // Get current AI provider settings
         const currentSettings = await this.settingsManager.getSettings();
         const selectedService = currentSettings['model-service'];
@@ -498,12 +559,14 @@ class TaskpaneApp {
         const isCompatible = await this.checkProviderClassificationCompatibility(selectedService, classification);
         
         if (!isCompatible) {
+            this.pendingAction = 'analyze';
             this.showProviderClassificationWarning(selectedService, classification);
             return;
         }
         
-        // Legacy check for SECRET or above
-        if (classification.level > 2) { // SECRET or above
+        // Check for restricted classifications (SECRET and above) - show warning for user override
+        if (classification.restricted) {
+            this.pendingAction = 'analyze';
             this.showClassificationWarning(classification);
             return;
         }
@@ -523,9 +586,9 @@ class TaskpaneApp {
                 return true; // Allow if no config found
             }
             
-            if (providerInfo.maxClassificationLevel !== undefined) {
-                const compatible = classification.level <= providerInfo.maxClassificationLevel;
-                console.debug(`Classification compatibility: ${classification.text} (level ${classification.level}) vs ${serviceProvider} (max level ${providerInfo.maxClassificationLevel}) = ${compatible}`);
+            if (providerInfo.supportedClassifications) {
+                const compatible = providerInfo.supportedClassifications.includes(classification.text);
+                console.debug(`Classification compatibility: ${classification.text} vs ${serviceProvider} supported: [${providerInfo.supportedClassifications.join(', ')}] = ${compatible}`);
                 return compatible;
             }
             
@@ -541,16 +604,21 @@ class TaskpaneApp {
         const providerInfo = providersConfig[provider];
         const providerNote = providerInfo?.classificationNote || 'Classification restrictions apply';
         
-        const message = `The selected AI provider "${provider}" does not support ${classification.text} classified content.\n\n${providerNote}\n\nPlease select a different provider or use unclassified content.`;
+        // Show the warning panel instead of just an error message
+        const warningPanel = document.getElementById('classification-warning');
+        const message = document.getElementById('classification-message');
         
-        this.uiController.showError(message);
+        let warningText = `The selected AI provider "${provider}" does not support ${classification.text} classified content.\n\n${providerNote}\n\nProceeding may violate security policies and will be logged for compliance review.`;
+        
+        message.textContent = warningText;
+        warningPanel.classList.remove('hidden');
         
         // Log the incompatibility
         this.logger.logEvent('classification_incompatible', {
+            ...this.getEmailIdentifiersForTelemetry(),
             provider: provider,
             classification: classification.text,
-            classificationLevel: classification.level,
-            maxSupportedLevel: providerInfo?.maxClassificationLevel
+            provider_supported_classifications: providerInfo?.supportedClassifications
         });
     }
 
@@ -558,14 +626,25 @@ class TaskpaneApp {
         const warningPanel = document.getElementById('classification-warning');
         const message = document.getElementById('classification-message');
         
-        message.textContent = `This email is classified as ${classification.text}. Proceeding may violate security policies.`;
+        let warningText = `This email is classified as ${classification.text}.`;
+        
+        if (classification.markings && classification.markings.length > 0) {
+            warningText += ` Found ${classification.markings.length} classification marking${classification.markings.length > 1 ? 's' : ''}.`;
+        }
+        
+        warningText += ` Proceeding may violate security policies and will be logged for compliance review.`;
+        
+        message.textContent = warningText;
         warningPanel.classList.remove('hidden');
         
-        // Log the warning
+        // Enhanced telemetry logging
         this.logger.logEvent('classification_warning_shown', {
+            ...this.getEmailIdentifiersForTelemetry(),
             classification: classification.text,
-            level: classification.level,
-            subject: this.currentEmail.subject
+            restricted: classification.restricted,
+            markings_found: classification.markings?.length || 0,
+            details: classification.details,
+            timestamp: new Date().toISOString()
         });
     }
 
@@ -573,15 +652,124 @@ class TaskpaneApp {
         // Hide warning
         document.getElementById('classification-warning').classList.add('hidden');
         
-        // Log override
+        // Get current classification and provider info for detailed logging
+        const classification = this.classificationDetector.detectClassification(this.currentEmail.body);
+        const currentSettings = await this.settingsManager.getSettings();
+        const selectedService = currentSettings['model-service'];
+        const providerConfig = this.defaultProvidersConfig?.[selectedService];
+        
+        // Enhanced telemetry logging for security compliance
         this.logger.logEvent('classification_warning_overridden', {
-            subject: this.currentEmail.subject,
-            user_id: this.getUserId(),
-            timestamp: new Date().toISOString()
+            ...this.getEmailIdentifiersForTelemetry(),
+            classification_detected: classification.text,
+            classification_restricted: classification.restricted,
+            classification_markings_count: classification.markings?.length || 0,
+            provider_used: selectedService,
+            provider_supported_classifications: providerConfig?.supportedClassifications,
+            timestamp: new Date().toISOString(),
+            warning_type: 'user_override'
         });
         
-        // Proceed with analysis
-        await this.performAnalysis();
+        // Proceed with the action the user was trying to perform
+        if (this.pendingAction === 'analyze') {
+            await this.performAnalysis();
+        } else if (this.pendingAction === 'generateResponse') {
+            await this.continueResponseGeneration();
+        } else {
+            // Default to analysis if no pending action
+            await this.performAnalysis();
+        }
+        
+        // Mark that user has overridden classification for this email
+        this.classificationOverrideGranted = true;
+        
+        // Clear pending action
+        this.pendingAction = null;
+    }
+
+    async continueResponseGeneration() {
+        // This function contains the response generation logic without classification checks
+        // since the user has already been warned and chosen to proceed
+        try {
+            this.uiController.showStatus('Generating response...');
+            this.uiController.setButtonLoading('generate-response', true);
+            
+            // Get configuration
+            const config = this.getAIConfiguration();
+            const responseConfig = this.getResponseConfiguration();
+            
+            // Ensure we have analysis data - if not, run analysis first
+            let analysisData = this.currentAnalysis;
+            if (!analysisData) {
+                console.warn('No current analysis available, running analysis first');
+                this.uiController.showStatus('Analyzing email before generating response...');
+                
+                try {
+                    // Run analysis first (this will bypass classification checks since we're in override mode)
+                    await this.performAnalysis();
+                    analysisData = this.currentAnalysis;
+                    
+                    if (!analysisData) {
+                        // If analysis still failed, create minimal default
+                        console.warn('Analysis failed, using default analysis');
+                        analysisData = {
+                            keyPoints: ['Email content needs response'],
+                            sentiment: 'neutral',
+                            responseStrategy: 'respond professionally and appropriately'
+                        };
+                    }
+                } catch (analysisError) {
+                    console.warn('Analysis failed, using default analysis:', analysisError);
+                    analysisData = {
+                        keyPoints: ['Email content needs response'],
+                        sentiment: 'neutral',
+                        responseStrategy: 'respond professionally and appropriately'
+                    };
+                }
+                
+                this.uiController.showStatus('Generating response...');
+            }
+            
+            // Generate response
+            this.currentResponse = await this.aiService.generateResponse(
+                this.currentEmail,
+                analysisData,
+                { ...config, ...responseConfig }
+            );
+
+            console.info('Response generated:', this.currentResponse);
+            
+            // Display response
+            this.displayResponse(this.currentResponse);
+            this.switchToResponseTab();
+            this.showRefineButton();
+            
+            this.uiController.showStatus('Response generated successfully.');
+            
+        } catch (error) {
+            console.error('Response generation failed:', error);
+            this.uiController.showError('Failed to generate response. Please try again.');
+        } finally {
+            this.uiController.setButtonLoading('generate-response', false);
+        }
+    }
+
+    async isClassificationSupportedByProvider(classificationText) {
+        try {
+            const currentSettings = await this.settingsManager.getSettings();
+            const selectedService = currentSettings['model-service'];
+            const providersConfig = await this.fetchDefaultProvidersConfig();
+            const providerInfo = providersConfig[selectedService];
+            
+            if (!providerInfo || !providerInfo.supportedClassifications) {
+                return true; // Assume supported if no config (fail open for compatibility)
+            }
+            
+            return providerInfo.supportedClassifications.includes(classificationText);
+        } catch (error) {
+            console.error('Error checking classification support:', error);
+            return true; // Assume supported on error (fail open for compatibility)
+        }
     }
 
     cancelAnalysis() {
@@ -642,6 +830,37 @@ class TaskpaneApp {
             return;
         }
 
+        // Check for classification compatibility with selected provider BEFORE generating
+        const classification = this.classificationDetector.detectClassification(this.currentEmail.body);
+        console.debug('Email classification check for response generation:', classification);
+        
+        // Skip classification checks if user has already overridden for this email
+        if (this.classificationOverrideGranted) {
+            console.debug('Classification override already granted, proceeding with response generation');
+            await this.continueResponseGeneration();
+            return;
+        }
+        
+        // Get current AI provider settings
+        const currentSettings = await this.settingsManager.getSettings();
+        const selectedService = currentSettings['model-service'];
+        
+        // Check if provider supports this classification level
+        const isCompatible = await this.checkProviderClassificationCompatibility(selectedService, classification);
+        
+        if (!isCompatible) {
+            this.pendingAction = 'generateResponse';
+            this.showProviderClassificationWarning(selectedService, classification);
+            return;
+        }
+        
+        // Check for restricted classifications (SECRET and above) - show warning for user override
+        if (classification.restricted) {
+            this.pendingAction = 'generateResponse';
+            this.showClassificationWarning(classification);
+            return;
+        }
+
         try {
             this.uiController.showStatus('Generating response...');
             this.uiController.setButtonLoading('generate-response', true);
@@ -650,15 +869,36 @@ class TaskpaneApp {
             const config = this.getAIConfiguration();
             const responseConfig = this.getResponseConfiguration();
             
-            // Ensure we have analysis data, or create default
+            // Ensure we have analysis data - if not, run analysis first
             let analysisData = this.currentAnalysis;
             if (!analysisData) {
-                console.warn('No current analysis available, creating default analysis');
-                analysisData = {
-                    keyPoints: ['Email content needs response'],
-                    sentiment: 'neutral',
-                    responseStrategy: 'respond professionally and appropriately'
-                };
+                console.warn('No current analysis available, running analysis first');
+                this.uiController.showStatus('Analyzing email before generating response...');
+                
+                try {
+                    // Run analysis first
+                    await this.performAnalysis();
+                    analysisData = this.currentAnalysis;
+                    
+                    if (!analysisData) {
+                        // If analysis still failed, create minimal default
+                        console.warn('Analysis failed, using default analysis');
+                        analysisData = {
+                            keyPoints: ['Email content needs response'],
+                            sentiment: 'neutral',
+                            responseStrategy: 'respond professionally and appropriately'
+                        };
+                    }
+                } catch (analysisError) {
+                    console.warn('Analysis failed, using default analysis:', analysisError);
+                    analysisData = {
+                        keyPoints: ['Email content needs response'],
+                        sentiment: 'neutral',
+                        responseStrategy: 'respond professionally and appropriately'
+                    };
+                }
+                
+                this.uiController.showStatus('Generating response...');
             }
             
             // Generate response
@@ -705,11 +945,13 @@ class TaskpaneApp {
             const config = this.getAIConfiguration();
             
             // Pass both custom instructions and current response settings
+            // Convert settings to the same format used by generateResponse
+            const responseConfig = this.getResponseConfiguration();
             this.currentResponse = await this.aiService.refineResponse(
                 this.currentResponse,
                 customInstructions,
                 config,
-                currentSettings // Pass current settings for length, tone, urgency
+                responseConfig // Use responseConfig instead of currentSettings for consistent format
             );
             
             this.displayResponse(this.currentResponse);
@@ -748,12 +990,32 @@ class TaskpaneApp {
             }
         }
         
-        const apiKeyElement = document.getElementById('api-key');
-        const endpointUrlElement = document.getElementById('endpoint-url');
+        const service = this.modelServiceSelect ? this.modelServiceSelect.value : '';
+        
+        // Get provider-specific configuration
+        let apiKey = '';
+        let endpointUrl = '';
+        
+        if (service) {
+            const providerConfig = this.settingsManager.getProviderConfig(service);
+            apiKey = providerConfig['api-key'] || '';
+            endpointUrl = providerConfig['endpoint-url'] || '';
+            
+            // Override with UI values if they exist (for immediate use before saving)
+            const apiKeyElement = document.getElementById('api-key');
+            const endpointUrlElement = document.getElementById('endpoint-url');
+            if (apiKeyElement && apiKeyElement.value) {
+                apiKey = apiKeyElement.value;
+            }
+            if (endpointUrlElement && endpointUrlElement.value) {
+                endpointUrl = endpointUrlElement.value;
+            }
+        }
+        
         return {
-            service: this.modelServiceSelect ? this.modelServiceSelect.value : '',
-            apiKey: apiKeyElement ? apiKeyElement.value : '',
-            endpointUrl: endpointUrlElement ? endpointUrlElement.value : '',
+            service,
+            apiKey,
+            endpointUrl,
             model
         };
     }
@@ -774,20 +1036,57 @@ class TaskpaneApp {
 
     getSelectedModel() {
         const service = this.modelServiceSelect ? this.modelServiceSelect.value : '';
-        const modelMap = {
-            'openai': 'gpt-4',
-            'ollama': '',
-            'custom': 'custom'
-        };
-        return modelMap[service] || 'gpt-4';
+        
+        // Get default model from provider configuration instead of hardcoded map
+        if (this.defaultProvidersConfig && this.defaultProvidersConfig[service]) {
+            return this.defaultProvidersConfig[service].defaultModel || this.getFallbackModel();
+        }
+        
+        // Final fallback from global config or ultimate hardcoded fallback
+        return this.getFallbackModel();
+    }
+
+    getDefaultModelForProvider(provider) {
+        if (!provider || !this.defaultProvidersConfig) {
+            return this.getFallbackModel();
+        }
+        
+        if (this.defaultProvidersConfig[provider] && this.defaultProvidersConfig[provider].defaultModel) {
+            return this.defaultProvidersConfig[provider].defaultModel;
+        }
+        
+        return this.getFallbackModel();
+    }
+
+    providerNeedsApiKey(provider) {
+        // Ollama typically runs locally and doesn't need an API key
+        if (provider === 'ollama') {
+            return false;
+        }
+        
+        // Most other providers (OpenAI, Claude, etc.) require API keys
+        if (provider === 'openai' || provider === 'anthropic' || provider === 'claude') {
+            return true;
+        }
+        
+        // For onsite1/onsite2 or custom providers, assume they need API keys unless explicitly configured otherwise
+        if (this.defaultProvidersConfig && this.defaultProvidersConfig[provider]) {
+            // Check if the provider config indicates no API key needed
+            return this.defaultProvidersConfig[provider].requiresApiKey !== false;
+        }
+        
+        // Default to requiring API key for unknown providers
+        return true;
+    }
+
+    getFallbackModel() {
+        // Use fallback model from global config, or ultimate hardcoded fallback for internal deployments
+        return this.defaultProvidersConfig?._config?.fallbackModel || 'llama3:latest';
     }
 
     async updateModelDropdown() {
         if (!this.modelServiceSelect || !this.modelSelectGroup || !this.modelSelect) return;
-        // Load default models config (cache for session)
-        if (!this.defaultModelsConfig) {
-            this.defaultModelsConfig = await this.fetchDefaultModelsConfig();
-        }
+        
         const aiConfigPlaceholder = document.getElementById('ai-config-placeholder');
         this.modelSelectGroup.style.display = 'none';
         this.modelSelect.innerHTML = '';
@@ -797,13 +1096,14 @@ class TaskpaneApp {
         if (this.modelServiceSelect.value === 'ollama') {
             this.modelSelectGroup.style.display = '';
             this.modelSelect.innerHTML = '<option value="">Loading...</option>';
-            const baseUrl = (this.baseUrlInput && this.baseUrlInput.value) || 'http://localhost:11434';
+            const endpointUrlElement = document.getElementById('endpoint-url');
+            const baseUrl = (endpointUrlElement && endpointUrlElement.value) || 'http://localhost:11434';
             try {
                 models = await AIService.fetchOllamaModels(baseUrl);
                 this.modelSelect.innerHTML = models.length
                     ? models.map(m => `<option value="${m}">${m}</option>`).join('')
                     : '<option value="">No models found</option>';
-                preferred = this.defaultModelsConfig && this.defaultModelsConfig.ollama;
+                preferred = this.defaultProvidersConfig?.ollama?.defaultModel || this.getFallbackModel();
                 if (preferred && models.includes(preferred)) {
                     this.modelSelect.value = preferred;
                 } else if (models.length) {
@@ -816,12 +1116,41 @@ class TaskpaneApp {
                 }
             } catch (err) {
                 errorMsg = `Error fetching models: ${err.message || err}`;
-                this.modelSelect.innerHTML = '<option value="">Error fetching models</option>';
+                // Use knownModels from provider config as fallback
+                const serviceKey = this.modelServiceSelect.value;
+                const providerConfig = this.defaultProvidersConfig?.[serviceKey];
+                if (providerConfig?.knownModels && providerConfig.knownModels.length > 0) {
+                    models = providerConfig.knownModels;
+                    this.modelSelect.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
+                    // Still try to set the preferred model
+                    preferred = this.defaultProvidersConfig?.ollama?.defaultModel || this.getFallbackModel();
+                    if (preferred && models.includes(preferred)) {
+                        this.modelSelect.value = preferred;
+                    } else if (models.length) {
+                        this.modelSelect.value = models[0];
+                    }
+                } else {
+                    this.modelSelect.innerHTML = '<option value="">Error fetching models</option>';
+                }
             }
-        } else if (this.modelServiceSelect.value === 'openai') {
+        } else if (this.modelServiceSelect.value !== 'ollama') {
+            // Handle OpenAI-compatible services (openai, onsite1, onsite2, etc.)
             this.modelSelectGroup.style.display = '';
             this.modelSelect.innerHTML = '<option value="">Loading...</option>';
-            let endpoint = this.baseUrlInput && this.baseUrlInput.value ? this.baseUrlInput.value : 'https://api.openai.com/v1';
+            
+            const serviceKey = this.modelServiceSelect.value;
+            
+            // Get endpoint URL: user input -> provider config -> configured fallback
+            let endpoint = '';
+            const endpointUrlElement = document.getElementById('endpoint-url');
+            if (endpointUrlElement && endpointUrlElement.value) {
+                endpoint = endpointUrlElement.value;
+            } else if (this.defaultProvidersConfig && this.defaultProvidersConfig[serviceKey] && this.defaultProvidersConfig[serviceKey].baseUrl) {
+                endpoint = this.defaultProvidersConfig[serviceKey].baseUrl;
+            } else {
+                endpoint = this.defaultProvidersConfig?._config?.fallbackBaseUrl || 'http://localhost:11434/v1';
+            }
+            
             if (endpoint.endsWith('/')) endpoint = endpoint.slice(0, -1);
             const apiKey = document.getElementById('api-key').value;
             try {
@@ -832,16 +1161,20 @@ class TaskpaneApp {
                 });
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const data = await response.json();
-                models = (data.data || []).map(m => m.id).filter(id => id.startsWith('gpt-') || id.startsWith('ft-') || id.startsWith('davinci') || id.startsWith('babbage') || id.startsWith('curie'));
+                models = (data.data || []).map(m => m.id);
                 this.modelSelect.innerHTML = models.length
                     ? models.map(m => `<option value="${m}">${m}</option>`).join('')
                     : '<option value="">No models found</option>';
             } catch (err) {
                 errorMsg = `Error fetching models: ${err.message || err}`;
-                models = ['gpt-4', 'gpt-4o', 'gpt-3.5-turbo', 'gpt-3.5-turbo-16k'];
+                // Use knownModels from provider config as fallback, or global config fallback
+                const serviceKey = this.modelServiceSelect.value;
+                const providerConfig = this.defaultProvidersConfig?.[serviceKey];
+                models = providerConfig?.knownModels || [this.getFallbackModel()];
                 this.modelSelect.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
             }
-            preferred = this.defaultModelsConfig && this.defaultModelsConfig.openai;
+            // Get preferred model from the specific service's config, not just openai
+            preferred = this.defaultProvidersConfig?.[serviceKey]?.defaultModel || this.getFallbackModel();
             if (preferred && models.includes(preferred)) {
                 this.modelSelect.value = preferred;
             } else if (models.length) {
@@ -1108,6 +1441,18 @@ class TaskpaneApp {
             }
         }
         
+        // Save current provider's settings before switching
+        const oldProvider = event.target.dataset.oldValue;
+        if (oldProvider && oldProvider !== 'undefined') {
+            await this.saveCurrentProviderSettings(oldProvider);
+        }
+        
+        // Load new provider's settings
+        await this.loadProviderSettings(event.target.value);
+        
+        // Update provider labels in UI
+        this.updateProviderLabels(event.target.value);
+        
         // Store old value for next time
         event.target.dataset.oldValue = event.target.value;
         
@@ -1126,8 +1471,277 @@ class TaskpaneApp {
         document.getElementById('settings-panel').classList.add('hidden');
     }
 
+    async resetSettings() {
+        try {
+            // Create a simple confirmation using the existing UI
+            const confirmed = await this.showConfirmDialog(
+                'Reset All Settings',
+                'Are you sure you want to reset all settings to defaults? This will:\n\n' +
+                '• Clear all API keys for all providers\n' +
+                '• Reset all preferences to default values\n' +
+                '• Clear all custom configurations\n' +
+                '• Reset to default provider and model\n\n' +
+                'This action cannot be undone.'
+            );
+            
+            if (!confirmed) {
+                return;
+            }
+            
+            // Use SettingsManager to properly clear all settings
+            const success = await this.settingsManager.clearAllSettings();
+            
+            if (success) {
+                // Get default provider and model from S3 config
+                const defaultProvider = this.defaultProvidersConfig?._config?.defaultProvider || 'ollama';
+                const defaultModel = this.getDefaultModelForProvider(defaultProvider);
+                
+                // Set default provider and model
+                if (this.modelServiceSelect) {
+                    this.modelServiceSelect.value = defaultProvider;
+                }
+                
+                // Save the default settings
+                await this.settingsManager.saveSettings({
+                    'model-service': defaultProvider,
+                    'model-select': defaultModel
+                });
+                
+                // Check if the default provider requires an API key
+                const needsApiKey = this.providerNeedsApiKey(defaultProvider);
+                
+                if (needsApiKey) {
+                    // Show success message with API key instruction
+                    await this.showInfoDialog('Settings Reset - Action Required', 
+                        `Settings have been reset to defaults.\n\nDefault provider: ${defaultProvider}\nDefault model: ${defaultModel}\n\n⚠️ IMPORTANT: This provider requires an API key.\n\nAfter the page reloads:\n1. Open Settings (⚙️)\n2. Enter your ${defaultProvider.toUpperCase()} API key\n3. Close Settings to save\n\nThe application will now reload.`);
+                } else {
+                    // Show success message for local providers
+                    await this.showInfoDialog('Success', 
+                        `Settings have been reset to defaults.\n\nDefault provider: ${defaultProvider}\nDefault model: ${defaultModel}\n\nThe application will now reload.`);
+                }
+                
+                window.location.reload();
+            } else {
+                // Show error message
+                await this.showInfoDialog('Error', 'Failed to reset settings. Please try again or contact support.');
+            }
+            
+        } catch (error) {
+            console.error('Error during settings reset:', error);
+            await this.showInfoDialog('Error', 'An error occurred while resetting settings. Please try again.');
+        }
+    }
+
+    // Simple dialog replacement for Office Add-in environment
+    showConfirmDialog(title, message) {
+        return new Promise((resolve) => {
+            // Create a simple overlay dialog since Office Add-ins don't support native dialogs
+            const overlay = document.createElement('div');
+            overlay.style.cssText = `
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+                background: rgba(0,0,0,0.5); z-index: 10000; display: flex; 
+                align-items: center; justify-content: center;
+            `;
+            
+            const dialog = document.createElement('div');
+            dialog.style.cssText = `
+                background: white; padding: 20px; border-radius: 8px; max-width: 400px; 
+                box-shadow: 0 4px 12px rgba(0,0,0,0.3); text-align: center;
+            `;
+            
+            dialog.innerHTML = `
+                <h3 style="margin-top: 0; color: #d73502;">${title}</h3>
+                <p style="white-space: pre-line; margin: 16px 0;">${message}</p>
+                <div style="margin-top: 20px;">
+                    <button id="confirm-yes" style="margin-right: 10px; padding: 8px 16px; background: #d73502; color: white; border: none; border-radius: 4px; cursor: pointer;">Reset Settings</button>
+                    <button id="confirm-no" style="padding: 8px 16px; background: #ccc; color: black; border: none; border-radius: 4px; cursor: pointer;">Cancel</button>
+                </div>
+            `;
+            
+            overlay.appendChild(dialog);
+            document.body.appendChild(overlay);
+            
+            dialog.querySelector('#confirm-yes').onclick = () => {
+                document.body.removeChild(overlay);
+                resolve(true);
+            };
+            
+            dialog.querySelector('#confirm-no').onclick = () => {
+                document.body.removeChild(overlay);
+                resolve(false);
+            };
+            
+            // Close on overlay click
+            overlay.onclick = (e) => {
+                if (e.target === overlay) {
+                    document.body.removeChild(overlay);
+                    resolve(false);
+                }
+            };
+        });
+    }
+
+    showInfoDialog(title, message) {
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            overlay.style.cssText = `
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+                background: rgba(0,0,0,0.5); z-index: 10000; display: flex; 
+                align-items: center; justify-content: center;
+            `;
+            
+            const dialog = document.createElement('div');
+            dialog.style.cssText = `
+                background: white; padding: 20px; border-radius: 8px; max-width: 400px; 
+                box-shadow: 0 4px 12px rgba(0,0,0,0.3); text-align: center;
+            `;
+            
+            dialog.innerHTML = `
+                <h3 style="margin-top: 0; color: ${title === 'Error' ? '#d73502' : '#0078d4'};">${title}</h3>
+                <p style="white-space: pre-line; margin: 16px 0;">${message}</p>
+                <div style="margin-top: 20px;">
+                    <button id="info-ok" style="padding: 8px 16px; background: #0078d4; color: white; border: none; border-radius: 4px; cursor: pointer;">OK</button>
+                </div>
+            `;
+            
+            overlay.appendChild(dialog);
+            document.body.appendChild(overlay);
+            
+            dialog.querySelector('#info-ok').onclick = () => {
+                document.body.removeChild(overlay);
+                resolve();
+            };
+            
+            // Close on overlay click
+            overlay.onclick = (e) => {
+                if (e.target === overlay) {
+                    document.body.removeChild(overlay);
+                    resolve();
+                }
+            };
+        });
+    }
+
+    showHelpDialog(title, message, helpUrl) {
+        return new Promise((resolve) => {
+            // Create a custom dialog with "Open Help" and "Close" buttons
+            const overlay = document.createElement('div');
+            overlay.style.cssText = `
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+                background: rgba(0,0,0,0.5); z-index: 10000; display: flex; 
+                align-items: center; justify-content: center;
+            `;
+            
+            const dialog = document.createElement('div');
+            dialog.style.cssText = `
+                background: white; padding: 20px; border-radius: 8px; max-width: 400px; 
+                box-shadow: 0 4px 12px rgba(0,0,0,0.3); text-align: center;
+            `;
+            
+            dialog.innerHTML = `
+                <h3 style="margin-top: 0; color: #0078d4;">${title}</h3>
+                <p style="white-space: pre-line; margin: 16px 0; text-align: left;">${message}</p>
+                <p style="margin: 16px 0; font-size: 14px; color: #666;">
+                    <strong>Help URL:</strong><br>
+                    <a href="${helpUrl}" target="_blank" style="color: #0078d4; word-break: break-all;">${helpUrl}</a>
+                </p>
+                <div style="margin-top: 20px; display: flex; gap: 10px; justify-content: center;">
+                    <button id="help-open" style="padding: 8px 16px; background: #0078d4; color: white; border: none; border-radius: 4px; cursor: pointer;">Open Help</button>
+                    <button id="help-close" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Close</button>
+                </div>
+            `;
+            
+            overlay.appendChild(dialog);
+            document.body.appendChild(overlay);
+            
+            dialog.querySelector('#help-open').onclick = () => {
+                document.body.removeChild(overlay);
+                resolve(true);
+            };
+            
+            dialog.querySelector('#help-close').onclick = () => {
+                document.body.removeChild(overlay);
+                resolve(false);
+            };
+            
+            // Close on overlay click
+            overlay.onclick = (e) => {
+                if (e.target === overlay) {
+                    document.body.removeChild(overlay);
+                    resolve(false);
+                }
+            };
+        });
+    }
+
+    async showProviderHelp() {
+        const currentProvider = this.modelServiceSelect?.value || 'ollama';
+        const providerConfig = this.defaultProvidersConfig?.[currentProvider];
+        
+        if (providerConfig) {
+            const helpText = providerConfig.helpText || 'No help available for this provider.';
+            const helpUrl = providerConfig.helpUrl;
+            
+            if (helpUrl) {
+                // Show custom dialog with "Open Help" and "Close" buttons
+                const openHelp = await this.showHelpDialog(
+                    `Help: ${providerConfig.label || currentProvider}`,
+                    helpText,
+                    helpUrl
+                );
+                
+                if (openHelp) {
+                    // Open the help URL in a new window
+                    try {
+                        window.open(helpUrl, '_blank', 'noopener,noreferrer');
+                    } catch (error) {
+                        console.error('Error opening help URL:', error);
+                        await this.showInfoDialog('Error', 'Unable to open help page. Please visit the URL manually.');
+                    }
+                }
+            } else {
+                // Show info dialog for providers without URLs
+                await this.showInfoDialog(
+                    `Help: ${providerConfig.label || currentProvider}`,
+                    helpText
+                );
+            }
+        } else {
+            await this.showInfoDialog('Help', 'No help available for the current provider.');
+        }
+    }
+
+    openGitHubRepository(event) {
+        event.preventDefault();
+        
+        // Get GitHub repository URL from configuration
+        const githubUrl = this.defaultProvidersConfig?._config?.githubRepository || 
+                         'https://github.com/your-username/outlook-email-assistant';
+        
+        try {
+            window.open(githubUrl, '_blank', 'noopener,noreferrer');
+        } catch (error) {
+            console.error('Error opening GitHub repository:', error);
+            // Fallback: copy URL to clipboard if available
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(githubUrl).then(() => {
+                    this.showInfoDialog('GitHub Repository', 
+                        `Unable to open browser. Repository URL copied to clipboard:\n\n${githubUrl}`);
+                }).catch(() => {
+                    this.showInfoDialog('GitHub Repository', 
+                        `Unable to open browser. Please visit:\n\n${githubUrl}`);
+                });
+            } else {
+                this.showInfoDialog('GitHub Repository', 
+                    `Please visit the repository at:\n\n${githubUrl}`);
+            }
+        }
+    }
+
     toggleHighContrast(enabled) {
+        console.debug('toggleHighContrast called:', enabled);
         document.body.classList.toggle('high-contrast', enabled);
+        console.debug('body classes after toggle:', document.body.classList.toString());
         this.saveSettings();
     }
 
@@ -1139,10 +1753,10 @@ class TaskpaneApp {
     async loadSettingsIntoUI() {
         const settings = this.settingsManager.getSettings();
 
-        // Load form values
+        // Load form values (excluding provider-specific fields)
         Object.keys(settings).forEach(key => {
-            // Never load custom-instructions from settings
-            if (key === 'custom-instructions') return;
+            // Skip provider-specific fields and custom-instructions
+            if (key === 'custom-instructions' || key === 'api-key' || key === 'endpoint-url' || key === 'provider-configs') return;
             const element = document.getElementById(key);
             if (element) {
                 if (element.type === 'checkbox') {
@@ -1159,27 +1773,41 @@ class TaskpaneApp {
             customInstructions.value = '';
         }
 
-        // Ensure base-url input defaults to http://localhost:11434 if not set
-        const baseUrlInput = document.getElementById('base-url');
-        if (baseUrlInput && (!settings['base-url'] || !baseUrlInput.value)) {
-            baseUrlInput.value = 'http://localhost:11434';
-        }
-
-        // If no model-service is set, default to the first available option and save it
+        // If no model-service is set, default to the configured default provider
         const modelServiceSelect = document.getElementById('model-service');
         if (modelServiceSelect && (!settings['model-service'] || !modelServiceSelect.value)) {
             if (modelServiceSelect.options.length > 0) {
-                const firstOption = modelServiceSelect.options[0].value;
-                modelServiceSelect.value = firstOption;
-                console.debug(`[TaskPane-${this.instanceId}] Setting default model-service to: ${firstOption}`);
+                // Use configured default provider, or fall back to first option
+                const defaultProvider = this.defaultProvidersConfig?._config?.defaultProvider;
+                let selectedOption = null;
+                
+                if (defaultProvider) {
+                    // Try to find the default provider in the options
+                    for (let option of modelServiceSelect.options) {
+                        if (option.value === defaultProvider) {
+                            selectedOption = option.value;
+                            break;
+                        }
+                    }
+                }
+                
+                // Fall back to first option if default provider not found
+                const chosenOption = selectedOption || modelServiceSelect.options[0].value;
+                modelServiceSelect.value = chosenOption;
+                console.debug(`[TaskPane-${this.instanceId}] Setting default model-service to: ${chosenOption} (configured: ${defaultProvider})`);
                 
                 // Save this default to settings
                 const updatedSettings = this.settingsManager.getSettings();
-                updatedSettings['model-service'] = firstOption;
+                updatedSettings['model-service'] = chosenOption;
                 await this.settingsManager.saveSettings(updatedSettings);
-                console.debug(`[TaskPane-${this.instanceId}] Saved default model-service to settings: ${firstOption}`);
+                console.debug(`[TaskPane-${this.instanceId}] Saved default model-service to settings: ${chosenOption}`);
             }
         }
+
+        // Load provider-specific settings for the current service
+        const currentService = settings['model-service'] || this.defaultProvidersConfig?._config?.defaultProvider || 'openai';
+        await this.loadProviderSettings(currentService);
+        this.updateProviderLabels(currentService);
 
         // Trigger change events
         if (settings['model-service']) {
@@ -1187,6 +1815,7 @@ class TaskpaneApp {
         }
 
         if (settings['high-contrast']) {
+            console.debug('Applying high contrast setting on load:', settings['high-contrast']);
             this.toggleHighContrast(true);
         }
 
@@ -1198,12 +1827,17 @@ class TaskpaneApp {
     saveSettings() {
         const settings = {};
         
-        // Collect all form values
+        // Collect all form values except provider-specific ones
         const inputs = document.querySelectorAll('input, select, textarea');
         console.debug('[DEBUG] saveSettings: Found', inputs.length, 'form elements');
         
         inputs.forEach((input, index) => {
             if (input.id) {
+                // Skip provider-specific fields as they're handled separately
+                if (input.id === 'api-key' || input.id === 'endpoint-url') {
+                    return;
+                }
+                
                 const value = input.type === 'checkbox' ? input.checked : input.value;
                 settings[input.id] = value;
                 
@@ -1225,6 +1859,81 @@ class TaskpaneApp {
         this.settingsManager.saveSettings(settings);
     }
 
+    /**
+     * Save current provider's API key and endpoint settings
+     * @param {string} provider - The provider key to save settings for
+     */
+    async saveCurrentProviderSettings(provider) {
+        if (!provider || provider === 'undefined') return;
+        
+        const apiKeyElement = document.getElementById('api-key');
+        const endpointUrlElement = document.getElementById('endpoint-url');
+        
+        const apiKey = apiKeyElement ? apiKeyElement.value.trim() : '';
+        const endpointUrl = endpointUrlElement ? endpointUrlElement.value.trim() : '';
+        
+        console.debug(`[DEBUG] Saving settings for provider ${provider}:`, { 
+            apiKeyLength: apiKey.length, 
+            endpointUrl,
+            hasApiKey: !!apiKey,
+            elementValue: apiKeyElement ? `length=${apiKeyElement.value.length}` : 'no element'
+        });
+        
+        await this.settingsManager.setProviderConfig(provider, apiKey, endpointUrl);
+        console.debug(`Saved settings for provider ${provider}:`, { apiKey: apiKey ? '[HIDDEN]' : '[EMPTY]', endpointUrl });
+    }
+
+    /**
+     * Load provider-specific settings into the UI
+     * @param {string} provider - The provider key to load settings for
+     */
+    async loadProviderSettings(provider) {
+        if (!provider || provider === 'undefined') return;
+        
+        const providerConfig = this.settingsManager.getProviderConfig(provider);
+        
+        const apiKeyElement = document.getElementById('api-key');
+        const endpointUrlElement = document.getElementById('endpoint-url');
+        
+        if (apiKeyElement) {
+            apiKeyElement.value = providerConfig['api-key'] || '';
+        }
+        
+        if (endpointUrlElement) {
+            // Use provider's endpoint or fall back to default from ai-providers.json
+            let defaultEndpoint = '';
+            if (this.defaultProvidersConfig && this.defaultProvidersConfig[provider]) {
+                defaultEndpoint = this.defaultProvidersConfig[provider].baseUrl || '';
+            }
+            
+            endpointUrlElement.value = providerConfig['endpoint-url'] || defaultEndpoint;
+        }
+        
+        console.debug(`Loaded settings for provider ${provider}:`, { 
+            apiKey: providerConfig['api-key'] ? '[HIDDEN]' : '', 
+            endpointUrl: providerConfig['endpoint-url'] || defaultEndpoint 
+        });
+    }
+
+    /**
+     * Update provider labels in the UI to show which provider is currently selected
+     * @param {string} provider - The current provider key
+     */
+    updateProviderLabels(provider) {
+        const providerLabel = this.defaultProvidersConfig?.[provider]?.label || provider;
+        
+        const apiKeyLabel = document.getElementById('api-key-provider-label');
+        const endpointUrlLabel = document.getElementById('endpoint-url-provider-label');
+        
+        if (apiKeyLabel) {
+            apiKeyLabel.textContent = `(${providerLabel})`;
+        }
+        
+        if (endpointUrlLabel) {
+            endpointUrlLabel.textContent = `(${providerLabel})`;
+        }
+    }
+
     getUserId() {
         // In a real implementation, this would get the actual user ID
         return Office.context.mailbox.userProfile.emailAddress || 'unknown';
@@ -1244,6 +1953,61 @@ class TaskpaneApp {
         const recipientMatch = this.currentEmail.recipients.match(/<([^>]+)>/);
         return recipientMatch ? recipientMatch[1] : null;
     }
+
+    getEmailIdentifiersForTelemetry() {
+        if (!this.currentEmail) {
+            return null;
+        }
+
+        // Create a hash of the subject for correlation without revealing content
+        const subjectHash = this.currentEmail.subject ? 
+            this.hashString(this.currentEmail.subject) : null;
+
+        // Get available Office.js identifiers that don't reveal content
+        const identifiers = {
+            // Primary identifiers for email tracking
+            conversationId: this.currentEmail.conversationId || null,
+            itemId: this.currentEmail.itemId || null,
+            itemClass: this.currentEmail.itemClass || null,
+            
+            // Content-safe metadata
+            subjectHash: subjectHash,
+            normalizedSubject: this.currentEmail.normalizedSubject || null,
+            bodyLength: this.currentEmail.bodyLength || 0,
+            hasAttachments: this.currentEmail.hasAttachments || false,
+            hasInternetMessageId: this.currentEmail.hasInternetMessageId || false,
+            
+            // Email context
+            itemType: this.currentEmail.itemType || null,
+            isReply: this.currentEmail.isReply || false,
+            date: this.currentEmail.date?.toISOString() || null
+        };
+
+        // Try to get additional identifiers if available from Office context
+        try {
+            if (Office.context.mailbox.item) {
+                // Add any additional runtime identifiers
+                if (Office.context.mailbox.item.itemId && !identifiers.itemId) {
+                    identifiers.itemId = Office.context.mailbox.item.itemId;
+                }
+            }
+        } catch (error) {
+            console.debug('Could not access additional Office identifiers:', error);
+        }
+
+        return identifiers;
+    }
+
+    hashString(str) {
+        // Simple hash function for subject correlation without revealing content
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            const char = str.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash; // Convert to 32-bit integer
+        }
+        return hash.toString(36); // Return as base-36 string
+    }
 }
 
 // Initialize the application when Office.js is ready
@@ -1252,20 +2016,4 @@ Office.onReady(() => {
     app.initialize().catch(error => {
         console.error('Failed to initialize application:', error);
     });
-
-    // Add logic for Reset Settings button
-    const resetBtn = document.getElementById('reset-settings');
-    if (resetBtn) {
-        resetBtn.addEventListener('click', () => {
-            // Remove settings from localStorage
-            localStorage.removeItem('settings');
-            // Optionally clear Office.js roaming settings
-            if (typeof Office !== 'undefined' && Office.context && Office.context.roamingSettings) {
-                Office.context.roamingSettings.remove('settings');
-                Office.context.roamingSettings.saveAsync();
-            }
-            // Reload the app to reset UI
-            location.reload();
-        });
-    }
 });

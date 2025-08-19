@@ -56,10 +56,6 @@ module.exports = {
           to: 'config/ai-providers.json'
         },
         {
-          from: './src/config/ai-models.json',
-          to: 'config/ai-models.json'
-        },
-        {
           from: './src/config/telemetry.json',
           to: 'config/telemetry.json'
         }

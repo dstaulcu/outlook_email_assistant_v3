@@ -109,8 +109,7 @@ npm run build
 │   │   └── commands.js        # Ribbon command handlers
 │   ├── assets/               # Static assets (CSS, icons)
 │   ├── config/                # Configuration files
-│   │   ├── ai-providers.json # AI provider configurations
-│   │   ├── ai-models.json    # Default AI model configurations
+│   │   ├── ai-providers.json # AI provider configurations (includes model lists)
 │   │   └── telemetry.json    # Telemetry and logging configuration
 │   └── manifest.xml          # Office Add-in manifest
 ├── tools/                    # Build and deployment scripts

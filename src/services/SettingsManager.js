@@ -9,8 +9,16 @@ export class SettingsManager {
         this.defaultSettings = {
             // AI Configuration
             'model-service': 'openai',
-            'api-key': '',
-            'endpoint-url': '',
+            'api-key': '', // Legacy single API key for backwards compatibility
+            'endpoint-url': '', // Legacy single endpoint for backwards compatibility
+            
+            // Provider-specific configurations
+            'provider-configs': {
+                'openai': { 'api-key': '', 'endpoint-url': 'https://api.openai.com/v1' },
+                'ollama': { 'api-key': '', 'endpoint-url': 'http://localhost:11434' },
+                'onsite1': { 'api-key': '', 'endpoint-url': 'https://api.openai.com/v1' },
+                'onsite2': { 'api-key': '', 'endpoint-url': 'https://api.openai.com/v1' }
+            },
             
             // Response Preferences
             'response-length': '3',
@@ -53,6 +61,14 @@ export class SettingsManager {
                 console.debug('Successfully loaded from Office storage:', officeSettings);
                 this.settings = { ...this.defaultSettings, ...officeSettings };
                 console.debug('Merged settings with defaults:', this.settings);
+                
+                // Migrate legacy settings if needed
+                const migrated = this.migrateLegacySettings();
+                if (migrated) {
+                    await this.saveSettings(this.settings);
+                    console.debug('Legacy settings migrated and saved');
+                }
+                
                 return this.settings;
             }
             console.warn('No Office storage settings found, trying localStorage...');
@@ -63,6 +79,14 @@ export class SettingsManager {
                 console.debug('Successfully loaded from localStorage:', localSettings);
                 this.settings = { ...this.defaultSettings, ...localSettings };
                 console.debug('Merged settings with defaults:', this.settings);
+                
+                // Migrate legacy settings if needed
+                const migrated = this.migrateLegacySettings();
+                if (migrated) {
+                    await this.saveSettings(this.settings);
+                    console.debug('Legacy settings migrated and saved');
+                }
+                
                 return this.settings;
             }
             console.debug('No localStorage settings found, using defaults...');
@@ -495,6 +519,96 @@ export class SettingsManager {
 
         } catch (error) {
             console.error('Failed to clear settings:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Get provider-specific configuration for a given service
+     * @param {string} provider - The provider key (e.g., 'openai', 'ollama')
+     * @returns {Object} Provider configuration with api-key and endpoint-url
+     */
+    getProviderConfig(provider) {
+        if (!provider) return { 'api-key': '', 'endpoint-url': '' };
+        
+        // Try provider-specific config first
+        if (this.settings['provider-configs'] && this.settings['provider-configs'][provider]) {
+            return { ...this.settings['provider-configs'][provider] };
+        }
+        
+        // Fall back to legacy single settings for backwards compatibility
+        return {
+            'api-key': this.settings['api-key'] || '',
+            'endpoint-url': this.settings['endpoint-url'] || ''
+        };
+    }
+
+    /**
+     * Set provider-specific configuration for a given service
+     * @param {string} provider - The provider key
+     * @param {string} apiKey - The API key for this provider
+     * @param {string} endpointUrl - The endpoint URL for this provider
+     * @returns {Promise<boolean>} Success status
+     */
+    async setProviderConfig(provider, apiKey, endpointUrl) {
+        if (!provider) return false;
+        
+        try {
+            // Initialize provider-configs if it doesn't exist
+            if (!this.settings['provider-configs']) {
+                this.settings['provider-configs'] = { ...this.defaultSettings['provider-configs'] };
+            }
+            
+            // Initialize this provider's config if it doesn't exist
+            if (!this.settings['provider-configs'][provider]) {
+                this.settings['provider-configs'][provider] = { 'api-key': '', 'endpoint-url': '' };
+            }
+            
+            // Update the provider's configuration
+            this.settings['provider-configs'][provider]['api-key'] = apiKey || '';
+            this.settings['provider-configs'][provider]['endpoint-url'] = endpointUrl || '';
+            
+            // Save the updated settings
+            return await this.saveSettings(this.settings);
+            
+        } catch (error) {
+            console.error('Failed to set provider config:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Migrate legacy single API key/endpoint settings to provider-specific format
+     * This ensures backwards compatibility when upgrading
+     */
+    migrateLegacySettings() {
+        try {
+            // Only migrate if we have legacy settings but no provider-configs
+            if ((this.settings['api-key'] || this.settings['endpoint-url']) && 
+                !this.settings['provider-configs']) {
+                
+                console.debug('Migrating legacy settings to provider-specific format');
+                
+                // Initialize provider configs
+                this.settings['provider-configs'] = { ...this.defaultSettings['provider-configs'] };
+                
+                // Get the current model service or default to openai
+                const currentService = this.settings['model-service'] || 'openai';
+                
+                // Migrate the legacy settings to the current provider
+                if (this.settings['provider-configs'][currentService]) {
+                    this.settings['provider-configs'][currentService]['api-key'] = this.settings['api-key'] || '';
+                    this.settings['provider-configs'][currentService]['endpoint-url'] = this.settings['endpoint-url'] || '';
+                }
+                
+                console.debug('Legacy settings migrated successfully');
+                return true;
+            }
+            
+            return false; // No migration needed
+            
+        } catch (error) {
+            console.error('Failed to migrate legacy settings:', error);
             return false;
         }
     }

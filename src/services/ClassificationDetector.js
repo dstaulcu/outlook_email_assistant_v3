@@ -5,20 +5,24 @@
 
 export class ClassificationDetector {
     constructor() {
-        // Classification levels and their numeric values for comparison
+        // Classification levels - keeping simple string-based approach
         this.classifications = {
-            'UNCLASSIFIED': { level: 0, color: 'green' },
-            'CONFIDENTIAL': { level: 1, color: 'yellow' },
-            'SECRET': { level: 2, color: 'orange' },
-            'TOP SECRET': { level: 3, color: 'red' },
-            'TS': { level: 3, color: 'red' },
-            'COSMIC TOP SECRET': { level: 4, color: 'red' },
-            'CTS': { level: 4, color: 'red' }
+            'UNCLASSIFIED': { color: 'green', restricted: false },
+            'CONFIDENTIAL': { color: 'yellow', restricted: false }, 
+            'SECRET': { color: 'orange', restricted: true },
+            'TOP SECRET': { color: 'red', restricted: true },
+            'TS': { color: 'red', restricted: true },
+            'COSMIC TOP SECRET': { color: 'red', restricted: true },
+            'CTS': { color: 'red', restricted: true }
         };
 
         // Common classification patterns
         this.patterns = [
-            // Standard classification markings
+            // Internal system classification block (primary pattern)
+            // Matches: CLASSIFICATION_BLOCK at start of email
+            /^(UNCLASSIFIED|CONFIDENTIAL|SECRET|TOP SECRET|TS|COSMIC TOP SECRET|CTS)\s*$/gim,
+            
+            // Standard classification markings (fallback)
             /^(UNCLASSIFIED|CONFIDENTIAL|SECRET|TOP SECRET|TS|COSMIC TOP SECRET|CTS)\s*$/gim,
             
             // Classification with additional markings
@@ -27,12 +31,12 @@ export class ClassificationDetector {
             // Classification banners
             /^\s*(CLASSIFICATION:|CLASS:)\s*(UNCLASSIFIED|CONFIDENTIAL|SECRET|TOP SECRET|TS|COSMIC TOP SECRET|CTS)\s*$/gim,
             
-            // Portion markings
+            // Portion markings within content
             /\(([UCS]|CONFIDENTIAL|SECRET|TOP SECRET|TS)\)/gim
         ];
 
-        // Lines to check (first N lines of email)
-        this.linesToCheck = 5;
+        // Lines to check - classification should be in first 2 lines for structured blocks
+        this.linesToCheck = 2;
     }
 
     /**
@@ -44,12 +48,94 @@ export class ClassificationDetector {
         if (!emailBody || typeof emailBody !== 'string') {
             return {
                 detected: false,
-                level: 0,
                 text: 'UNCLASSIFIED',
+                restricted: false,
                 warning: false,
                 details: 'No content to analyze'
             };
         }
+
+        // First, try to parse the structured classification block
+        const structuredResult = this.parseClassificationBlock(emailBody);
+        if (structuredResult.detected) {
+            return structuredResult;
+        }
+
+        // Fallback to pattern-based detection
+        return this.detectClassificationByPatterns(emailBody);
+    }
+
+    /**
+     * Parses structured classification block from internal system
+     * Expected format:
+     * -----------------------------------
+     * CLASSIFICATION_BLOCK
+     * DISSEMINATION_CONTROLS  
+     * DECLASSIFICATION_BLOCK
+     * ------------------------------------
+     * @param {string} emailBody - The email body text
+     * @returns {Object} Classification detection result
+     */
+    parseClassificationBlock(emailBody) {
+        // Look for the classification block structure in first few lines
+        const lines = emailBody.split('\n').slice(0, 4);
+        
+        let classificationLine = null;
+        let blockFound = false;
+        
+        // Check if first line looks like a separator (dashes)
+        if (lines.length >= 2) {
+            const firstLine = lines[0].trim();
+            if (firstLine.match(/^-{10,}$/) || firstLine.includes('---')) {
+                // Classification should be on the second line (index 1)
+                const potentialClassification = lines[1].trim().toUpperCase();
+                
+                if (this.classifications[potentialClassification]) {
+                    classificationLine = potentialClassification;
+                    blockFound = true;
+                } else {
+                    // Also check if classification is part of a longer line
+                    for (const classLevel of Object.keys(this.classifications)) {
+                        if (potentialClassification.includes(classLevel)) {
+                            classificationLine = classLevel;
+                            blockFound = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!blockFound || !classificationLine) {
+            return { detected: false };
+        }
+
+        const classification = this.normalizeClassification(classificationLine);
+        const classificationInfo = this.classifications[classification];
+
+        return {
+            detected: true,
+            text: classification,
+            restricted: classificationInfo.restricted,
+            warning: classificationInfo.restricted,
+            color: classificationInfo.color,
+            details: `Structured classification block detected: ${this.getClassificationMessage(classification)}`,
+            markings: [{
+                text: `Classification Block: ${classification}`,
+                classification: classification,
+                restricted: classificationInfo.restricted,
+                line: 2  // Always line 2 for structured blocks
+            }],
+            source: 'structured_block'
+        };
+    }
+
+    /**
+     * Fallback pattern-based detection for emails without structured blocks
+     * @param {string} emailBody - The email body text
+     * @returns {Object} Classification detection result
+     */
+    detectClassificationByPatterns(emailBody) {
 
         // Get first few lines for classification checking
         const lines = emailBody.split('\n').slice(0, this.linesToCheck);
@@ -63,23 +149,31 @@ export class ClassificationDetector {
             const matches = headerText.matchAll(pattern);
             
             for (const match of matches) {
-                const classification = this.normalizeClassification(match[1] || match[2]);
+                let classification = null;
+                
+                // Extract classification based on pattern structure
+                if (match[0].includes('CLASSIFICATION:') || match[0].includes('CLASS:')) {
+                    // Pattern 3: classification banner - classification is in match[2]
+                    classification = this.normalizeClassification(match[2]);
+                } else {
+                    // Patterns 1, 2, 4: classification is in match[1]
+                    classification = this.normalizeClassification(match[1]);
+                }
                 
                 if (this.classifications[classification]) {
                     detectedMarkings.push({
                         text: match[0].trim(),
                         classification: classification,
-                        level: this.classifications[classification].level,
+                        restricted: this.classifications[classification].restricted,
                         line: this.findLineNumber(emailBody, match[0])
                     });
 
-                    // Track highest classification found
-                    if (!highestClassification || 
-                        this.classifications[classification].level > highestClassification.level) {
+                    // Determine highest classification using priority order
+                    if (!highestClassification || this.isHigherClassification(classification, highestClassification.text)) {
                         highestClassification = {
                             text: classification,
-                            level: this.classifications[classification].level,
-                            color: this.classifications[classification].color
+                            color: this.classifications[classification].color,
+                            restricted: this.classifications[classification].restricted
                         };
                     }
                 }
@@ -90,26 +184,47 @@ export class ClassificationDetector {
         if (!highestClassification) {
             return {
                 detected: false,
-                level: 0,
                 text: 'UNCLASSIFIED',
+                restricted: false,
                 warning: false,
                 details: 'No classification markings detected',
                 markings: []
             };
         }
 
-        // Determine if warning should be shown (SECRET and above)
-        const shouldWarn = highestClassification.level >= 2;
+        // Determine if warning should be shown (restricted classifications)
+        const shouldWarn = highestClassification.restricted;
 
         return {
             detected: true,
-            level: highestClassification.level,
             text: highestClassification.text,
+            restricted: highestClassification.restricted,
             warning: shouldWarn,
             color: highestClassification.color,
-            details: this.getClassificationMessage(highestClassification),
+            details: this.getClassificationMessage(highestClassification.text),
             markings: detectedMarkings
         };
+    }
+
+    /**
+     * Determines if one classification is higher than another
+     * @param {string} classification1 - First classification
+     * @param {string} classification2 - Second classification  
+     * @returns {boolean} True if classification1 is higher
+     */
+    isHigherClassification(classification1, classification2) {
+        const priority = ['UNCLASSIFIED', 'CONFIDENTIAL', 'SECRET', 'TOP SECRET', 'COSMIC TOP SECRET'];
+        
+        // Normalize TS and CTS
+        const norm1 = classification1 === 'TS' ? 'TOP SECRET' : 
+                     classification1 === 'CTS' ? 'COSMIC TOP SECRET' : classification1;
+        const norm2 = classification2 === 'TS' ? 'TOP SECRET' : 
+                     classification2 === 'CTS' ? 'COSMIC TOP SECRET' : classification2;
+        
+        const index1 = priority.indexOf(norm1);
+        const index2 = priority.indexOf(norm2);
+        
+        return index1 > index2;
     }
 
     /**
@@ -133,6 +248,22 @@ export class ClassificationDetector {
     }
 
     /**
+     * Finds the line number where a classification block was found
+     * @param {string} text - Full text
+     * @param {string} classification - Classification found
+     * @returns {number} Line number (1-based)
+     */
+    findClassificationBlockLine(text, classification) {
+        const lines = text.split('\n');
+        for (let i = 0; i < Math.min(lines.length, 15); i++) {
+            if (lines[i].toUpperCase().includes(classification)) {
+                return i + 1;
+            }
+        }
+        return 1;
+    }
+
+    /**
      * Finds the line number where a match was found
      * @param {string} text - Full text
      * @param {string} match - Matched text
@@ -150,20 +281,22 @@ export class ClassificationDetector {
 
     /**
      * Gets appropriate message for classification level
-     * @param {Object} classification - Classification object
+     * @param {string} classification - Classification string
      * @returns {string} User-friendly message
      */
     getClassificationMessage(classification) {
-        switch (classification.level) {
-            case 0:
+        switch (classification) {
+            case 'UNCLASSIFIED':
                 return 'This content is unclassified and safe to process.';
-            case 1:
+            case 'CONFIDENTIAL':
                 return 'This content is marked CONFIDENTIAL. Exercise caution when sharing with external systems.';
-            case 2:
+            case 'SECRET':
                 return 'This content is marked SECRET. Sharing with external AI services may violate security policies.';
-            case 3:
+            case 'TOP SECRET':
+            case 'TS':
                 return 'This content is marked TOP SECRET. External processing is strictly prohibited by security policy.';
-            case 4:
+            case 'COSMIC TOP SECRET':
+            case 'CTS':
                 return 'This content has the highest classification level. External processing is absolutely forbidden.';
             default:
                 return 'Classification level could not be determined. Proceed with caution.';
@@ -171,13 +304,15 @@ export class ClassificationDetector {
     }
 
     /**
-     * Validates if processing should be allowed for a classification level
-     * @param {number} level - Classification level
+     * Validates if processing should be allowed for a classification
+     * @param {string} classification - Classification string
      * @param {boolean} userOverride - Whether user has overridden the warning
      * @returns {Object} Validation result
      */
-    validateProcessing(level, userOverride = false) {
-        if (level < 2) {
+    validateProcessing(classification, userOverride = false) {
+        const classificationInfo = this.classifications[classification];
+        
+        if (!classificationInfo || !classificationInfo.restricted) {
             return {
                 allowed: true,
                 requiresWarning: false,
@@ -185,7 +320,7 @@ export class ClassificationDetector {
             };
         }
 
-        if (level >= 2 && !userOverride) {
+        if (classificationInfo.restricted && !userOverride) {
             return {
                 allowed: false,
                 requiresWarning: true,
@@ -193,7 +328,7 @@ export class ClassificationDetector {
             };
         }
 
-        if (level >= 2 && userOverride) {
+        if (classificationInfo.restricted && userOverride) {
             return {
                 allowed: true,
                 requiresWarning: true,
@@ -216,7 +351,7 @@ export class ClassificationDetector {
      */
     generateReport(emailBody) {
         const detection = this.detectClassification(emailBody);
-        const validation = this.validateProcessing(detection.level);
+        const validation = this.validateProcessing(detection.text);
 
         return {
             ...detection,
@@ -233,21 +368,25 @@ export class ClassificationDetector {
      */
     shouldBlock(emailBody) {
         const detection = this.detectClassification(emailBody);
-        return detection.level >= 3; // TOP SECRET and above
+        // Block TOP SECRET and above
+        return detection.text === 'TOP SECRET' || detection.text === 'TS' || 
+               detection.text === 'COSMIC TOP SECRET' || detection.text === 'CTS';
     }
 
     /**
-     * Gets CSS class for classification level styling
-     * @param {number} level - Classification level
+     * Gets CSS class for classification styling
+     * @param {string} classification - Classification string
      * @returns {string} CSS class name
      */
-    getClassificationStyle(level) {
-        switch (level) {
-            case 0: return 'classification-unclassified';
-            case 1: return 'classification-confidential';
-            case 2: return 'classification-secret';
-            case 3: 
-            case 4: return 'classification-top-secret';
+    getClassificationStyle(classification) {
+        switch (classification) {
+            case 'UNCLASSIFIED': return 'classification-unclassified';
+            case 'CONFIDENTIAL': return 'classification-confidential';
+            case 'SECRET': return 'classification-secret';
+            case 'TOP SECRET':
+            case 'TS':
+            case 'COSMIC TOP SECRET': 
+            case 'CTS': return 'classification-top-secret';
             default: return 'classification-unknown';
         }
     }
@@ -259,7 +398,7 @@ export class ClassificationDetector {
      * @returns {string} Sanitized content safe for logging
      */
     sanitizeForLogging(content, detection) {
-        if (!detection.detected || detection.level === 0) {
+        if (!detection.detected || detection.text === 'UNCLASSIFIED') {
             // For unclassified, return first 100 characters
             return content.substring(0, 100) + (content.length > 100 ? '...' : '');
         }

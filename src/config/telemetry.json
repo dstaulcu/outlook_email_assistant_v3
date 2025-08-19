@@ -16,7 +16,7 @@
     }
   },
   "environment": {
-    "name": "development",
+    "name": "production",
     "version": "1.0.0"
   },
   "metadata": {
