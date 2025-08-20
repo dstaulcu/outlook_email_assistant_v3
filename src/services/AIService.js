@@ -424,11 +424,10 @@ Provide only the email body text that should be sent.`;
             return this.callCustomEndpoint(prompt, config);
         }
 
-        // Validate supported service
-        const supportedServices = ['openai', 'ollama', 'azure'];
-        if (!supportedServices.includes(service)) {
-            console.error(`[AIService] Unsupported AI service: ${service}`);
-            throw new Error(`Unsupported AI service: ${service}`);
+        // Validate service is configured in providers config
+        if (!this.providersConfig[service] && service !== 'custom') {
+            console.error(`[AIService] Service not configured: ${service}`);
+            throw new Error(`AI service '${service}' is not configured in providers config`);
         }
 
         // Build endpoint using provider configuration and user overrides
@@ -447,6 +446,7 @@ Provide only the email body text that should be sent.`;
             headers = { 'Content-Type': 'application/json' };
             console.debug('Built Ollama request body:', requestBody);
         } else {
+            // For OpenAI, onsite1, onsite2, and other providers, use OpenAI-compatible format
             requestBody = this.buildRequestBody(prompt, service, config);
             headers = this.buildHeaders(service, config);
             console.debug('Built request body:', requestBody);
@@ -532,7 +532,7 @@ Provide only the email body text that should be sent.`;
             baseUrl = this.providersConfig?._config?.fallbackBaseUrl || 'http://localhost:11434/v1';
         }
         
-        // Build service-specific endpoint path
+        // Build service-specific endpoint path        
         switch (service) {
             case 'openai':
                 return `${baseUrl}/chat/completions`;
@@ -541,7 +541,14 @@ Provide only the email body text that should be sent.`;
             case 'azure':
                 return baseUrl; // Azure endpoints are usually complete
             default:
-                return baseUrl;
+                // For custom providers, assume OpenAI-compatible API
+                // Check if provider config specifies a different API format
+                if (providerConfig && providerConfig.apiFormat === 'ollama') {
+                    return `${baseUrl}/api/chat`;
+                } else {
+                    // Default to OpenAI-compatible format for onsite1, onsite2, etc.
+                    return `${baseUrl}/chat/completions`;
+                }
         }
     }
 
@@ -601,9 +608,12 @@ Provide only the email body text that should be sent.`;
     buildRequestBody(prompt, service, config) {
         const maxTokens = this.getMaxTokens(service, config);
         
-        switch (service) {
+        // Get provider config to determine API format
+        const providerConfig = this.providersConfig[service];
+        const apiFormat = providerConfig?.apiFormat || 'openai'; // Default to OpenAI format
+        
+        switch (apiFormat) {
             case 'openai':
-            case 'custom':
                 const openaiBody = {
                     model: this.getDefaultModel(service, config),
                     messages: [
@@ -646,7 +656,7 @@ Provide only the email body text that should be sent.`;
                 return ollamaBody;
                 
             default:
-                throw new Error(`Unsupported service for request body: ${service}`);
+                throw new Error(`Unsupported API format: ${apiFormat} for service: ${service}`);
         }
     }
 
@@ -660,12 +670,24 @@ Provide only the email body text that should be sent.`;
         const headers = {
             'Content-Type': 'application/json'
         };
-        switch (service) {
+        
+        // Get provider config to determine API format
+        const providerConfig = this.providersConfig[service];
+        const apiFormat = providerConfig?.apiFormat || 'openai'; // Default to OpenAI format
+        
+        switch (apiFormat) {
             case 'openai':
-            case 'custom':
                 headers['Authorization'] = `Bearer ${config.apiKey}`;
                 break;
-            // Ollama does not require Authorization header by default
+            case 'ollama':
+                // Ollama does not require Authorization header by default
+                break;
+            default:
+                // For unknown formats, assume OpenAI-style auth if apiKey is provided
+                if (config.apiKey) {
+                    headers['Authorization'] = `Bearer ${config.apiKey}`;
+                }
+                break;
         }
         return headers;
     }

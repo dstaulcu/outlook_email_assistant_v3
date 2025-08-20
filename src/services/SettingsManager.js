@@ -16,14 +16,14 @@ export class SettingsManager {
             'provider-configs': {
                 'openai': { 'api-key': '', 'endpoint-url': 'https://api.openai.com/v1' },
                 'ollama': { 'api-key': '', 'endpoint-url': 'http://localhost:11434' },
-                'onsite1': { 'api-key': '', 'endpoint-url': 'https://api.openai.com/v1' },
-                'onsite2': { 'api-key': '', 'endpoint-url': 'https://api.openai.com/v1' }
+                'onsite1': { 'api-key': '', 'endpoint-url': '' }, // Empty to use baseUrl from ai-providers.json
+                'onsite2': { 'api-key': '', 'endpoint-url': '' }  // Empty to use baseUrl from ai-providers.json
             },
             
             // Response Preferences
-            'response-length': '3',
-            'response-tone': '3',
-            'response-urgency': '3',
+            'response-length': '1',
+            'response-tone': '1',
+            'response-urgency': '1',
             'custom-instructions': '',
             
             // Accessibility Settings

@@ -1825,7 +1825,7 @@ class TaskpaneApp {
     }
 
     saveSettings() {
-        const settings = {};
+        const formSettings = {};
         
         // Collect all form values except provider-specific ones
         const inputs = document.querySelectorAll('input, select, textarea');
@@ -1839,7 +1839,7 @@ class TaskpaneApp {
                 }
                 
                 const value = input.type === 'checkbox' ? input.checked : input.value;
-                settings[input.id] = value;
+                formSettings[input.id] = value;
                 
                 if (input.id === 'model-service') {
                     console.debug('[DEBUG] model-service element details:', {
@@ -1855,8 +1855,13 @@ class TaskpaneApp {
             }
         });
         
-        console.debug('[DEBUG] saveSettings collected:', settings);
-        this.settingsManager.saveSettings(settings);
+        console.debug('[DEBUG] saveSettings collected:', formSettings);
+        
+        // Merge form settings with existing settings to preserve provider-configs
+        const currentSettings = this.settingsManager.getSettings();
+        const mergedSettings = { ...currentSettings, ...formSettings };
+        
+        this.settingsManager.saveSettings(mergedSettings);
     }
 
     /**
@@ -1900,18 +1905,34 @@ class TaskpaneApp {
         }
         
         if (endpointUrlElement) {
-            // Use provider's endpoint or fall back to default from ai-providers.json
-            let defaultEndpoint = '';
+            // Determine which endpoint to use
+            let endpointToUse = providerConfig['endpoint-url'] || '';
+            
             if (this.defaultProvidersConfig && this.defaultProvidersConfig[provider]) {
-                defaultEndpoint = this.defaultProvidersConfig[provider].baseUrl || '';
+                const defaultEndpoint = this.defaultProvidersConfig[provider].baseUrl || '';
+                
+                // For onsite providers, check if stored endpoint is the old incorrect OpenAI URL
+                if (provider.startsWith('onsite') && defaultEndpoint) {
+                    // If stored endpoint is the old OpenAI URL, replace it with the correct baseUrl
+                    if (endpointToUse === 'https://api.openai.com/v1') {
+                        endpointToUse = defaultEndpoint;
+                    } else if (!endpointToUse) {
+                        // If no stored endpoint, use the baseUrl from ai-providers.json
+                        endpointToUse = defaultEndpoint;
+                    }
+                    // Otherwise keep the user's custom endpoint
+                } else if (!endpointToUse && defaultEndpoint) {
+                    // For other providers, use default only if no stored endpoint
+                    endpointToUse = defaultEndpoint;
+                }
             }
             
-            endpointUrlElement.value = providerConfig['endpoint-url'] || defaultEndpoint;
+            endpointUrlElement.value = endpointToUse;
         }
         
         console.debug(`Loaded settings for provider ${provider}:`, { 
             apiKey: providerConfig['api-key'] ? '[HIDDEN]' : '', 
-            endpointUrl: providerConfig['endpoint-url'] || defaultEndpoint 
+            endpointUrl: endpointUrlElement ? endpointUrlElement.value : 'no element'
         });
     }
 

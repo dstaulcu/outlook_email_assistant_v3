@@ -68,39 +68,51 @@ export class ClassificationDetector {
     /**
      * Parses structured classification block from internal system
      * Expected format:
-     * -----------------------------------
+     * ====================================
      * CLASSIFICATION_BLOCK
-     * DISSEMINATION_CONTROLS  
-     * DECLASSIFICATION_BLOCK
-     * ------------------------------------
+     * ...
+     * ...
+     * ====================================
      * @param {string} emailBody - The email body text
      * @returns {Object} Classification detection result
      */
     parseClassificationBlock(emailBody) {
         // Look for the classification block structure in first few lines
-        const lines = emailBody.split('\n').slice(0, 4);
+        const lines = emailBody.split('\n').slice(0, 6); // Check more lines to handle empty lines
         
         let classificationLine = null;
         let blockFound = false;
+        let classificationLineNumber = -1;
         
-        // Check if first line looks like a separator (dashes)
+        // Check if first line looks like a separator (equals signs)
         if (lines.length >= 2) {
             const firstLine = lines[0].trim();
-            if (firstLine.match(/^-{10,}$/) || firstLine.includes('---')) {
-                // Classification should be on the second line (index 1)
-                const potentialClassification = lines[1].trim().toUpperCase();
-                
-                if (this.classifications[potentialClassification]) {
-                    classificationLine = potentialClassification;
-                    blockFound = true;
-                } else {
-                    // Also check if classification is part of a longer line
-                    for (const classLevel of Object.keys(this.classifications)) {
-                        if (potentialClassification.includes(classLevel)) {
-                            classificationLine = classLevel;
-                            blockFound = true;
-                            break;
+            if (firstLine.match(/^={10,}$/)) {
+                // Look for classification in the next few lines (skip empty lines)
+                for (let i = 1; i < Math.min(lines.length, 5); i++) {
+                    const potentialClassification = lines[i].trim().toUpperCase();
+                    
+                    // Skip empty lines
+                    if (!potentialClassification) {
+                        continue;
+                    }
+                    
+                    if (this.classifications[potentialClassification]) {
+                        classificationLine = potentialClassification;
+                        blockFound = true;
+                        classificationLineNumber = i + 1; // Convert to 1-based line number
+                        break;
+                    } else {
+                        // Also check if classification is part of a longer line
+                        for (const classLevel of Object.keys(this.classifications)) {
+                            if (potentialClassification.includes(classLevel)) {
+                                classificationLine = classLevel;
+                                blockFound = true;
+                                classificationLineNumber = i + 1; // Convert to 1-based line number
+                                break;
+                            }
                         }
+                        if (blockFound) break;
                     }
                 }
             }
@@ -124,7 +136,7 @@ export class ClassificationDetector {
                 text: `Classification Block: ${classification}`,
                 classification: classification,
                 restricted: classificationInfo.restricted,
-                line: 2  // Always line 2 for structured blocks
+                line: classificationLineNumber  // Use actual line number where classification was found
             }],
             source: 'structured_block'
         };
