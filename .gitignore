@@ -20,6 +20,13 @@ yarn-error.log*
 .aws/
 aws-exports.js
 
+# AWS Infrastructure - Security sensitive files
+aws-infrastructure/*.pem
+aws-infrastructure/*.key
+aws-infrastructure/*-outputs.json
+aws-infrastructure/response.json
+aws-infrastructure/*.zip
+
 # IDE files
 .vscode/
 .idea/

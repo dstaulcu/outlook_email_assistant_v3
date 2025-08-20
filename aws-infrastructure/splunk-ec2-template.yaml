@@ -1,0 +1,259 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Splunk Enterprise instance on EC2 for testing and development'
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: 't3.medium'
+    AllowedValues: ['t3.small', 't3.medium', 't3.large', 't3.xlarge']
+    Description: 'EC2 instance type for Splunk'
+    
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: 'EC2 Key Pair for SSH access'
+    
+  AllowedCidr:
+    Type: String
+    Default: '0.0.0.0/0'
+    Description: 'CIDR block allowed to access Splunk (restrict this for security)'
+    
+  SplunkAdminPassword:
+    Type: String
+    MinLength: 8
+    NoEcho: true
+    Description: 'Admin password for Splunk (minimum 8 characters)'
+    
+  Environment:
+    Type: String
+    Default: 'dev'
+    Description: 'Environment name'
+
+Resources:
+  # VPC and Networking
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: '10.0.0.0/16'
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-vpc'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-igw'
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: '10.0.1.0/24'
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-public-subnet'
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-public-rt'
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  # Security Group
+  SplunkSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Security group for Splunk instance'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AllowedCidr
+          Description: 'SSH access'
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: !Ref AllowedCidr
+          Description: 'Splunk Web UI'
+        - IpProtocol: tcp
+          FromPort: 8088
+          ToPort: 8088
+          CidrIp: !Ref AllowedCidr
+          Description: 'Splunk HEC (HTTP Event Collector)'
+        - IpProtocol: tcp
+          FromPort: 9997
+          ToPort: 9997
+          CidrIp: !Ref AllowedCidr
+          Description: 'Splunk forwarder'
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: '0.0.0.0/0'
+          Description: 'All outbound traffic'
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-security-group'
+
+  # IAM Role for EC2
+  SplunkInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-instance-role'
+
+  SplunkInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref SplunkInstanceRole
+
+  # EC2 Instance
+  SplunkInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}'
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyPairName
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref SplunkSecurityGroup
+      IamInstanceProfile: !Ref SplunkInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y wget curl docker
+          
+          # Start docker service
+          service docker start
+          usermod -a -G docker ec2-user
+          
+          # Install docker-compose
+          curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          chmod +x /usr/local/bin/docker-compose
+          
+          # Create splunk directory
+          mkdir -p /opt/splunk
+          cd /opt/splunk
+          
+          # Create docker-compose file for Splunk
+          cat > docker-compose.yml << 'EOF'
+          version: '3.8'
+          services:
+            splunk:
+              image: splunk/splunk:latest
+              container_name: splunk-enterprise
+              environment:
+                - SPLUNK_START_ARGS=--accept-license
+                - SPLUNK_PASSWORD=${SplunkAdminPassword}
+                - SPLUNK_HEC_TOKEN=520fe85b-68f1-4a82-9131-33d9e5a5cddd
+              ports:
+                - "8000:8000"    # Web UI
+                - "8088:8088"    # HEC
+                - "9997:9997"    # Forwarder
+              volumes:
+                - splunk-var:/opt/splunk/var
+                - splunk-etc:/opt/splunk/etc
+              restart: unless-stopped
+              
+          volumes:
+            splunk-var:
+            splunk-etc:
+          EOF
+          
+          # Start Splunk
+          /usr/local/bin/docker-compose up -d
+          
+          # Wait for Splunk to start and enable HEC
+          sleep 120
+          
+          # Enable HTTP Event Collector
+          docker exec splunk-enterprise /opt/splunk/bin/splunk http-event-collector enable -auth admin:${SplunkAdminPassword} -uri https://localhost:8089
+          
+          # Create HEC token (if needed)
+          docker exec splunk-enterprise /opt/splunk/bin/splunk http-event-collector create hec-token -name "outlook-assistant" -auth admin:${SplunkAdminPassword} -uri https://localhost:8089 || true
+          
+          # Install CloudWatch agent for monitoring
+          wget https://s3.amazonaws.com/amazoncloudwatch-agent/amazon_linux/amd64/latest/amazon-cloudwatch-agent.rpm
+          rpm -U ./amazon-cloudwatch-agent.rpm
+          
+          # Signal completion
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource SplunkInstance --region ${AWS::Region}
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-splunk-instance'
+        - Key: Environment
+          Value: !Ref Environment
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+        Count: 1
+
+Outputs:
+  InstanceId:
+    Description: 'EC2 Instance ID'
+    Value: !Ref SplunkInstance
+    Export:
+      Name: !Sub '${AWS::StackName}-instance-id'
+      
+  PublicIP:
+    Description: 'Public IP address of Splunk instance'
+    Value: !GetAtt SplunkInstance.PublicIp
+    Export:
+      Name: !Sub '${AWS::StackName}-public-ip'
+      
+  SplunkWebUrl:
+    Description: 'Splunk Web UI URL'
+    Value: !Sub 'http://${SplunkInstance.PublicIp}:8000'
+    Export:
+      Name: !Sub '${AWS::StackName}-web-url'
+      
+  SplunkHecUrl:
+    Description: 'Splunk HEC URL for API Gateway'
+    Value: !Sub 'http://${SplunkInstance.PublicIp}:8088'
+    Export:
+      Name: !Sub '${AWS::StackName}-hec-url'
+      
+  SSHCommand:
+    Description: 'SSH command to connect to instance'
+    Value: !Sub 'ssh -i ${KeyPairName}.pem ec2-user@${SplunkInstance.PublicIp}'
+    Export:
+      Name: !Sub '${AWS::StackName}-ssh-command'

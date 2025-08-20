@@ -10,6 +10,7 @@ AI-Powered Email Analysis Outlook Add-in that enhances email productivity throug
 - **Accessible Interface**: Full keyboard navigation, screen reader support, and high-contrast mode
 - **Advanced Settings Management**: Persistent settings with Office 365 roaming and local backup
 - **Real-time Email Processing**: Extract email content, analyze sentiment, and generate contextual responses
+- **Cloud Telemetry Pipeline**: Secure telemetry via AWS API Gateway eliminating CORS and credential issues
 - **Windows Logging Integration**: PowerShell-based event logging to Windows Application Log
 
 ## Quick Start
@@ -62,12 +63,13 @@ npm run build
 - **AIService**: Multi-provider AI integration (OpenAI-compatible, Ollama, Custom on-site providers)
 - **ClassificationDetector**: Security classification pattern matching and validation
 - **SettingsManager**: Dual-storage settings (Office.js roaming + localStorage backup)
-- **Logger**: Windows Application Log integration via PowerShell
+- **Logger**: Cloud telemetry via AWS API Gateway and Windows Application Log integration
 - **UIController**: State management, loading states, and user feedback
 - **AccessibilityManager**: ARIA live regions, keyboard navigation, screen reader support
 
 ### Deployment Architecture
 - **Hosting**: AWS S3 static website hosting
+- **Telemetry Pipeline**: AWS API Gateway → Lambda → EC2 Splunk Enterprise for secure data collection
 - **Build Pipeline**: PowerShell-based build and deployment automation
 - **Environment Management**: Multi-environment support (Dev/Prd) with URL rewriting
 - **Asset Management**: Automated file discovery and URL updating for deployments

@@ -99,9 +99,3 @@ If add-in buttons don't appear, check in this order:
 2. Run `.\outlook_addin_diagnostics.ps1` and select option 2 for critical Office settings check
 3. Clear cache with `.\outlook_cache_clear.ps1`
 4. Verify S3 bucket accessibility
-
-## 🔗 Related Documentation
-
-- `../DEVELOPER_GUIDE.md` - Complete development setup guide
-- `../DEPLOYMENT_GUIDE.md` - Detailed deployment procedures  
-- `../TROUBLESHOOTING_CHECKLIST.md` - Quick troubleshooting reference

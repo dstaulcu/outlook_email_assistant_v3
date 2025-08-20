@@ -181,11 +181,13 @@ class TaskpaneApp {
                 await new Promise(resolve => setTimeout(resolve, 100));
             }
             
-            // Start Splunk auto-flush if enabled
-            if (this.logger.telemetryConfig?.telemetry?.enabled && 
-                this.logger.telemetryConfig.telemetry.provider === 'splunk_hec') {
-                this.logger.startSplunkAutoFlush();
-                console.info('Splunk telemetry enabled and auto-flush started');
+            // Start telemetry auto-flush if enabled
+            if (this.logger.telemetryConfig?.telemetry?.enabled) {
+                const provider = this.logger.telemetryConfig.telemetry.provider;
+                if (provider === 'splunk_hec' || provider === 'api_gateway') {
+                    this.logger.startSplunkAutoFlush();
+                    console.info(`${provider} telemetry enabled and auto-flush started`);
+                }
             }
             
         } catch (error) {

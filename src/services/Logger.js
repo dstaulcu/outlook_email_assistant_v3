@@ -77,9 +77,13 @@ export class Logger {
             // Always log to console for development/debugging
             console.debug(`[${level}] ${eventType}:`, logEntry);
 
-            // Add to Splunk queue if telemetry is enabled
-            if (this.telemetryConfig?.telemetry?.enabled && this.telemetryConfig.telemetry.provider === 'splunk_hec') {
-                await this.logToSplunk(eventType, logEntry, level);
+            // Add to telemetry queue if enabled
+            if (this.telemetryConfig?.telemetry?.enabled) {
+                if (this.telemetryConfig.telemetry.provider === 'splunk_hec') {
+                    await this.logToSplunk(eventType, logEntry, level);
+                } else if (this.telemetryConfig.telemetry.provider === 'api_gateway') {
+                    await this.logToApiGateway(eventType, logEntry, level);
+                }
             }
 
         } catch (error) {
@@ -188,6 +192,49 @@ export class Logger {
 
         } catch (error) {
             console.error('Failed to log to Splunk:', error);
+        }
+    }
+
+    /**
+     * Logs an event to API Gateway
+     * @param {string} eventType - Event type
+     * @param {Object} logEntry - Log entry data  
+     * @param {string} level - Log level
+     */
+    async logToApiGateway(eventType, logEntry, level) {
+        try {
+            if (!this.telemetryConfig?.telemetry?.api_gateway) {
+                console.warn('API Gateway configuration not available');
+                return;
+            }
+
+            const apiGatewayConfig = this.telemetryConfig.telemetry.api_gateway;
+            
+            // Create event in Splunk-compatible format for the API Gateway to forward
+            const splunkEvent = {
+                time: Math.floor(Date.now() / 1000),
+                host: window.location.hostname,
+                source: "outlook_addon", 
+                sourcetype: "json:outlook_email_assistant",
+                event: {
+                    ...logEntry,
+                    level: level,
+                    environment: this.telemetryConfig.environment
+                }
+            };
+
+            console.debug('Preparing API Gateway event:', splunkEvent);
+
+            // Add to Splunk queue for batch processing (reuse the same queue)
+            this.splunkQueue.push(splunkEvent);
+
+            // Process queue if it's getting full or on timer
+            if (this.splunkQueue.length >= (apiGatewayConfig.batchSize || 10)) {
+                await this.flushApiGatewayQueue();
+            }
+
+        } catch (error) {
+            console.error('Failed to log to API Gateway:', error);
         }
     }
 
@@ -304,29 +351,121 @@ export class Logger {
     }
 
     /**
-     * Start automatic Splunk queue flushing
+     * Flush queue to API Gateway endpoint
+     */
+    async flushApiGatewayQueue() {
+        if (this.splunkQueue.length === 0) return;
+
+        const events = [...this.splunkQueue];
+        this.splunkQueue = [];
+
+        try {
+            const apiGatewayConfig = this.telemetryConfig.telemetry.api_gateway;
+
+            console.debug(`[Logger] Flushing ${events.length} events to API Gateway`);
+
+            // Prepare fetch options - Send events one by one like Splunk HEC
+            const fetchOptions = {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: events.map(event => JSON.stringify(event)).join('\n')
+            };
+
+            console.debug(`[Logger] Attempting to send to: ${apiGatewayConfig.endpoint}`);
+            
+            const response = await fetch(apiGatewayConfig.endpoint, fetchOptions);
+
+            console.debug(`[Logger] Response status: ${response.status} ${response.statusText}`);
+
+            if (response.ok) {
+                console.info('Successfully sent events to API Gateway');
+                
+                // Reset connection error state on successful connection
+                this.splunkConnectionError = false;
+                this.splunkRetryCount = 0;
+                
+                // Log successful telemetry transmission
+                const result = await response.json();
+                console.debug('API Gateway response:', result);
+            } else {
+                console.error('Failed to send events to API Gateway:', response.status, response.statusText);
+                
+                // Re-queue events for retry (with limit)
+                if (events.length < 100) {
+                    this.splunkQueue.unshift(...events);
+                }
+            }
+
+        } catch (error) {
+            console.debug(`[Logger] API Gateway error details:`, {
+                message: error.message,
+                name: error.name,
+                stack: error.stack?.substring(0, 200)
+            });
+            
+            // Handle connection errors
+            if (error.message.includes('fetch') || error.message.includes('NetworkError')) {
+                if (!this.splunkConnectionError) {
+                    console.warn('API Gateway connection unavailable, events will be queued');
+                    this.splunkConnectionError = true;
+                }
+                
+                // Re-queue events for retry (with limit)
+                if (events.length < 100) {
+                    this.splunkQueue.unshift(...events);
+                    this.splunkRetryCount++;
+                    
+                    // If too many retries, clear the queue to prevent memory issues
+                    if (this.splunkRetryCount > this.maxRetries) {
+                        console.warn('Max API Gateway retry attempts reached, clearing queue');
+                        this.splunkQueue = [];
+                        this.splunkRetryCount = 0;
+                    }
+                }
+            } else {
+                console.error('Error flushing API Gateway queue:', error);
+            }
+        }
+    }
+
+    /**
+     * Start automatic queue flushing for current provider
      */
     startSplunkAutoFlush() {
         if (this.splunkFlushInterval) return;
 
-        const flushInterval = this.telemetryConfig?.telemetry?.splunk?.flushInterval || 60000;
+        const provider = this.telemetryConfig?.telemetry?.provider;
+        let flushInterval;
+        
+        if (provider === 'api_gateway') {
+            flushInterval = this.telemetryConfig?.telemetry?.api_gateway?.flushInterval || 60000;
+        } else {
+            flushInterval = this.telemetryConfig?.telemetry?.splunk?.flushInterval || 60000;
+        }
+
         this.splunkFlushInterval = setInterval(async () => {
             if (this.splunkQueue.length > 0) {
-                await this.flushSplunkQueue();
+                if (provider === 'api_gateway') {
+                    await this.flushApiGatewayQueue();
+                } else if (provider === 'splunk_hec') {
+                    await this.flushSplunkQueue();
+                }
             }
         }, flushInterval);
 
-        console.log(`[Logger] Started Splunk auto-flush with ${flushInterval}ms interval`);
+        console.log(`[Logger] Started ${provider} auto-flush with ${flushInterval}ms interval`);
     }
 
     /**
-     * Stop automatic Splunk queue flushing
+     * Stop automatic queue flushing
      */
     stopSplunkAutoFlush() {
         if (this.splunkFlushInterval) {
             clearInterval(this.splunkFlushInterval);
             this.splunkFlushInterval = null;
-            console.log('Stopped Splunk auto-flush');
+            console.log('Stopped telemetry auto-flush');
         }
     }
 
@@ -471,11 +610,16 @@ export class Logger {
     }
 
     /**
-     * Forces immediate flush of Splunk queue
+     * Forces immediate flush of telemetry queue
      */
     async forceFlush() {
         if (this.splunkQueue.length > 0) {
-            await this.flushSplunkQueue();
+            const provider = this.telemetryConfig?.telemetry?.provider;
+            if (provider === 'api_gateway') {
+                await this.flushApiGatewayQueue();
+            } else if (provider === 'splunk_hec') {
+                await this.flushSplunkQueue();
+            }
         }
     }
 }
