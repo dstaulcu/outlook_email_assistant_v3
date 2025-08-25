@@ -141,6 +141,31 @@ export class AIService {
             return [];
         }
     }
+
+    /**
+     * Fetch available models from OpenAI-compatible API using /models
+     * @param {string} baseUrl - The base URL for the API (should already include /v1)
+     * @param {string} apiKey - The API key for authentication
+     * @returns {Promise<Array>} - Array of model names
+     */
+    static async fetchOpenAICompatibleModels(baseUrl, apiKey) {
+        try {
+            const url = `${baseUrl.replace(/\/$/, '')}/models`;
+            const headers = {};
+            if (apiKey) {
+                headers['Authorization'] = `Bearer ${apiKey}`;
+            }
+            
+            const response = await fetch(url, { headers });
+            if (!response.ok) throw new Error(`Failed to fetch models: ${response.status}`);
+            const data = await response.json();
+            // OpenAI-compatible APIs return { data: [{ id: ... }, ...] }
+            return (data.data || []).map(m => m.id);
+        } catch (err) {
+            console.error('Error fetching OpenAI-compatible models:', err);
+            return [];
+        }
+    }
     
     async analyzeEmail(emailData, config) {
         console.debug('Starting email analysis...');

@@ -4,6 +4,9 @@
     "fallbackModel": "gpt-4",
     "fallbackBaseUrl": "https://onsite1.work.com/v1",
     "githubRepository": "https://github.com/dstaulcu/outlook_email_assistant_v3",
+    "issuesUrl": "https://github.com/dstaulcu/outlook_email_assistant_v3/issues",
+    "wikiUrl": "https://github.com/dstaulcu/outlook_email_assistant_v3/wiki",
+    "telemetryUrl": "https://splunk.company.com:8000/en-US/app/search/search",
     "description": "Global configuration - defaultProvider is used when no provider is selected, fallbackModel is used when provider config is unavailable, fallbackBaseUrl is used when no endpoint is configured"
   },
   "ollama": {

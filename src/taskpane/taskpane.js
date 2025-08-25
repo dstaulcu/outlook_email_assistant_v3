@@ -263,9 +263,12 @@ class TaskpaneApp {
         document.getElementById('close-settings').addEventListener('click', () => this.closeSettings());
         document.getElementById('reset-settings').addEventListener('click', () => this.resetSettings());
         
-        // Help and GitHub links
+        // Help and navigation links
         document.getElementById('api-key-help-btn').addEventListener('click', () => this.showProviderHelp());
-        document.getElementById('github-link').addEventListener('click', (e) => this.openGitHubRepository(e));
+        document.getElementById('source-link').addEventListener('click', (e) => this.openSource(e));
+        document.getElementById('issues-link').addEventListener('click', (e) => this.openIssues(e));
+        document.getElementById('wiki-link').addEventListener('click', (e) => this.openWiki(e));
+        document.getElementById('telemetry-link').addEventListener('click', (e) => this.openTelemetry(e));
         
         // Model service change
         document.getElementById('model-service').addEventListener('change', (e) => this.onModelServiceChange(e));
@@ -1156,14 +1159,7 @@ class TaskpaneApp {
             if (endpoint.endsWith('/')) endpoint = endpoint.slice(0, -1);
             const apiKey = document.getElementById('api-key').value;
             try {
-                const response = await fetch(`${endpoint}/models`, {
-                    headers: {
-                        'Authorization': `Bearer ${apiKey}`
-                    }
-                });
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                const data = await response.json();
-                models = (data.data || []).map(m => m.id);
+                models = await AIService.fetchOpenAICompatibleModels(endpoint, apiKey);
                 this.modelSelect.innerHTML = models.length
                     ? models.map(m => `<option value="${m}">${m}</option>`).join('')
                     : '<option value="">No models found</option>';
@@ -1713,7 +1709,7 @@ class TaskpaneApp {
         }
     }
 
-    openGitHubRepository(event) {
+    openSource(event) {
         event.preventDefault();
         
         // Get GitHub repository URL from configuration
@@ -1723,19 +1719,100 @@ class TaskpaneApp {
         try {
             window.open(githubUrl, '_blank', 'noopener,noreferrer');
         } catch (error) {
-            console.error('Error opening GitHub repository:', error);
+            console.error('Error opening source repository:', error);
             // Fallback: copy URL to clipboard if available
             if (navigator.clipboard && navigator.clipboard.writeText) {
                 navigator.clipboard.writeText(githubUrl).then(() => {
-                    this.showInfoDialog('GitHub Repository', 
+                    this.showInfoDialog('Source Repository', 
                         `Unable to open browser. Repository URL copied to clipboard:\n\n${githubUrl}`);
                 }).catch(() => {
-                    this.showInfoDialog('GitHub Repository', 
+                    this.showInfoDialog('Source Repository', 
                         `Unable to open browser. Please visit:\n\n${githubUrl}`);
                 });
             } else {
-                this.showInfoDialog('GitHub Repository', 
+                this.showInfoDialog('Source Repository', 
                     `Please visit the repository at:\n\n${githubUrl}`);
+            }
+        }
+    }
+
+    openIssues(event) {
+        event.preventDefault();
+        
+        // Get issues URL from configuration
+        const issuesUrl = this.defaultProvidersConfig?._config?.issuesUrl || 
+                         'https://github.com/your-username/outlook-email-assistant/issues';
+        
+        try {
+            window.open(issuesUrl, '_blank', 'noopener,noreferrer');
+        } catch (error) {
+            console.error('Error opening issues page:', error);
+            // Fallback: copy URL to clipboard if available
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(issuesUrl).then(() => {
+                    this.showInfoDialog('Issues Page', 
+                        `Unable to open browser. Issues URL copied to clipboard:\n\n${issuesUrl}`);
+                }).catch(() => {
+                    this.showInfoDialog('Issues Page', 
+                        `Unable to open browser. Please visit:\n\n${issuesUrl}`);
+                });
+            } else {
+                this.showInfoDialog('Issues Page', 
+                    `Please visit the issues page at:\n\n${issuesUrl}`);
+            }
+        }
+    }
+
+    openWiki(event) {
+        event.preventDefault();
+        
+        // Get wiki URL from configuration
+        const wikiUrl = this.defaultProvidersConfig?._config?.wikiUrl || 
+                       'https://github.com/your-username/outlook-email-assistant/wiki';
+        
+        try {
+            window.open(wikiUrl, '_blank', 'noopener,noreferrer');
+        } catch (error) {
+            console.error('Error opening wiki:', error);
+            // Fallback: copy URL to clipboard if available
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(wikiUrl).then(() => {
+                    this.showInfoDialog('Project Wiki', 
+                        `Unable to open browser. Wiki URL copied to clipboard:\n\n${wikiUrl}`);
+                }).catch(() => {
+                    this.showInfoDialog('Project Wiki', 
+                        `Unable to open browser. Please visit:\n\n${wikiUrl}`);
+                });
+            } else {
+                this.showInfoDialog('Project Wiki', 
+                    `Please visit the wiki at:\n\n${wikiUrl}`);
+            }
+        }
+    }
+
+    openTelemetry(event) {
+        event.preventDefault();
+        
+        // Get telemetry URL from configuration
+        const telemetryUrl = this.defaultProvidersConfig?._config?.telemetryUrl || 
+                            'https://your-splunk-instance.com:8000/en-US/app/search/search';
+        
+        try {
+            window.open(telemetryUrl, '_blank', 'noopener,noreferrer');
+        } catch (error) {
+            console.error('Error opening telemetry dashboard:', error);
+            // Fallback: copy URL to clipboard if available
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(telemetryUrl).then(() => {
+                    this.showInfoDialog('Telemetry Dashboard', 
+                        `Unable to open browser. Dashboard URL copied to clipboard:\n\n${telemetryUrl}`);
+                }).catch(() => {
+                    this.showInfoDialog('Telemetry Dashboard', 
+                        `Unable to open browser. Please visit:\n\n${telemetryUrl}`);
+                });
+            } else {
+                this.showInfoDialog('Telemetry Dashboard', 
+                    `Please visit the dashboard at:\n\n${telemetryUrl}`);
             }
         }
     }
