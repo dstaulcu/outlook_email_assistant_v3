@@ -230,6 +230,46 @@ export class AIService {
     }
 
     /**
+     * Generates follow-up suggestions for sent emails
+     * @param {Object} emailData - Original sent email data
+     * @param {Object} analysis - Email analysis results
+     * @param {Object} config - Configuration including AI and response settings
+     * @returns {Promise<Object>} Generated follow-up suggestions
+     */
+    async generateFollowupSuggestions(emailData, analysis, config) {
+        console.debug('Starting follow-up suggestions generation...');
+        console.debug('Email data:', emailData);
+        console.debug('Analysis:', analysis);
+        console.debug('Config:', config);
+        
+        // Ensure analysis is not null - provide default if missing
+        if (!analysis) {
+            console.warn('Analysis is null, providing default analysis structure');
+            analysis = {
+                keyPoints: ['Sent email content analyzed'],
+                sentiment: 'neutral',
+                responseStrategy: 'generate appropriate follow-up actions'
+            };
+        }
+        
+        const prompt = this.buildFollowupPrompt(emailData, analysis, config);
+        console.debug('Built follow-up prompt:', prompt);
+        
+        try {
+            console.debug('Calling AI for follow-up suggestions generation...');
+            const response = await this.callAI(prompt, config, 'followup');
+            console.debug('Raw follow-up suggestions result:', response);
+            
+            const parsed = this.parseFollowupResult(response);
+            console.info('Parsed follow-up suggestions result:', parsed);
+            return parsed;
+        } catch (error) {
+            console.error('Follow-up suggestions generation failed:', error);
+            throw new Error('Failed to generate follow-up suggestions: ' + error.message);
+        }
+    }
+
+    /**
      * Refines an existing response based on user feedback
      * @param {Object} currentResponse - Current response object
      * @param {string} instructions - User refinement instructions
@@ -361,6 +401,95 @@ Format your response as JSON with the following structure:
             `Return only the body of the email response, ready to be sent. Do not include subject line, email headers, or any introductory phrases such as 'Here's a suggested email response:' or similar. Output only the email content as it should appear in the reply.`;
 
         return prompt;
+    }
+
+    /**
+     * Builds the prompt for follow-up suggestions for sent emails
+     * @param {Object} emailData - Sent email data
+     * @param {Object} analysis - Email analysis results
+     * @param {Object} config - Configuration including AI and response settings
+     * @returns {string} Follow-up prompt
+     */
+    buildFollowupPrompt(emailData, analysis, config) {
+        const lengthMap = {
+            1: 'very brief (1-2 suggestions)',
+            2: 'brief (2-3 suggestions)',
+            3: 'medium (3-4 suggestions)',
+            4: 'detailed (4-5 suggestions)',
+            5: 'comprehensive (5+ suggestions)'
+        };
+
+        let prompt = `You are analyzing a sent email and providing follow-up suggestions.\n\n` +
+            `**Sent Email Context:**\n` +
+            `From: ${emailData.sender || 'Current User'}\n` +
+            `To: ${emailData.from}\n` +
+            `Subject: ${emailData.subject}\n` +
+            `Sent: ${emailData.date ? new Date(emailData.date).toLocaleString() : 'Recently'}\n` +
+            `Content: ${emailData.cleanBody || emailData.body}\n\n` +
+            `**Analysis Summary:**\n` +
+            `- Key Points: ${(analysis && analysis.keyPoints) ? analysis.keyPoints.join(', ') : 'Not analyzed'}\n` +
+            `- Sentiment: ${(analysis && analysis.sentiment) || 'Not analyzed'}\n` +
+            `- Context: ${(analysis && analysis.responseStrategy) || 'Not analyzed'}\n\n` +
+            `**Suggestion Requirements:**\n` +
+            `- Detail Level: ${lengthMap[config.length] || 'medium'}\n`;
+
+        if (config.customInstructions && config.customInstructions.trim()) {
+            prompt += `\n- Special Instructions: ${config.customInstructions}`;
+        }
+
+        prompt += `\n\n**Output Requirements:**\n` +
+            `Based on this sent email, provide practical follow-up suggestions that consider:\n` +
+            `1. What responses or reactions the recipients might have\n` +
+            `2. Potential next steps or actions that might be needed\n` +
+            `3. Timeline considerations for follow-up actions\n` +
+            `4. Any deliverables, commitments, or expectations set in the email\n` +
+            `5. Proactive steps to ensure successful outcomes\n\n` +
+            `IMPORTANT: Do NOT write an email response or use salutations like "Hi [Name]" or "Dear [Name]". ` +
+            `Do NOT include email signatures, greetings, or closing remarks. ` +
+            `This is for the SENDER to review what they should do next after sending their email.\n\n` +
+            `Format your response as actionable follow-up suggestions, not as an email to send. ` +
+            `Use bullet points or numbered lists for clarity. Focus on what the SENDER should consider doing next, ` +
+            `not what recipients should do. Start directly with the suggestions without any email formatting.`;
+
+        return prompt;
+    }
+
+    /**
+     * Parses follow-up suggestions result
+     * @param {string} response - Raw AI response
+     * @returns {Object} Parsed follow-up suggestions
+     */
+    parseFollowupResult(response) {
+        console.debug('Parsing follow-up suggestions response:', response);
+        
+        if (!response || typeof response !== 'string') {
+            console.warn('Invalid follow-up suggestions response, using fallback');
+            return {
+                suggestions: 'No follow-up suggestions could be generated at this time.',
+                type: 'followup'
+            };
+        }
+
+        // Clean up the response
+        let cleanedResponse = response.trim();
+        
+        // Remove any introductory phrases
+        const introPatterns = [
+            /^here are some follow-up suggestions?:?\s*/i,
+            /^follow-up suggestions?:?\s*/i,
+            /^based on.+?here are.+?:?\s*/i,
+            /^suggested follow-up actions?:?\s*/i
+        ];
+        
+        for (const pattern of introPatterns) {
+            cleanedResponse = cleanedResponse.replace(pattern, '');
+        }
+
+        return {
+            suggestions: cleanedResponse,
+            type: 'followup',
+            originalResponse: response
+        };
     }
 
     /**

@@ -101,7 +101,7 @@ class TaskpaneApp {
             clipboard_used: this.hasUsedClipboard,
             email_analyzed: this.currentEmail !== null,
             response_generated: this.currentResponse !== null
-        }, 'Information', this.getRecipientEmailForTelemetry());
+        }, 'Information', this.getUserEmailForTelemetry());
     }
 
     async initialize() {
@@ -127,6 +127,9 @@ class TaskpaneApp {
             
             // Setup UI
             await this.setupUI();
+            
+            // Update version display
+            this.updateVersionDisplay();
             
             // Setup accessibility
             this.accessibilityManager.initialize();
@@ -298,6 +301,17 @@ class TaskpaneApp {
         });
     }
 
+    /**
+     * Update version display with dynamic version from package.json
+     */
+    updateVersionDisplay() {
+        const versionDisplay = document.getElementById('version-display');
+        if (versionDisplay) {
+            const version = process.env.PACKAGE_VERSION || '1.0.0';
+            versionDisplay.textContent = `v${version}`;
+        }
+    }
+
     initializeSliders() {
         const sliders = [
             { id: 'response-length', values: ['Very Brief', 'Brief', 'Medium', 'Detailed', 'Very Detailed'] },
@@ -348,6 +362,12 @@ class TaskpaneApp {
         try {
             this.currentEmail = await this.emailAnalyzer.getCurrentEmail();
             this.classificationOverrideGranted = false; // Reset override flag for new email
+            
+            // Ensure context is properly stored on currentEmail for later use
+            if (this.currentEmail && this.currentEmail.context) {
+                console.debug('Email context loaded:', this.currentEmail.context);
+            }
+            
             await this.displayEmailSummary(this.currentEmail);
         } catch (error) {
             console.error('Failed to load current email:', error);
@@ -358,55 +378,197 @@ class TaskpaneApp {
     async displayEmailSummary(email) {
         console.debug('Displaying email summary:', email);
         
-        // Only update the fields we're actually showing
-        const subjectElement = document.getElementById('email-subject');
-        if (subjectElement) {
-            subjectElement.textContent = email.subject || 'No Subject';
-        }
+        // Email overview section has been removed for cleaner UI
+        // Classification checks still run in background for AI compatibility
         
-        // Enhanced classification display logic using ClassificationDetector
+        // Enhanced classification detection for AI provider compatibility
         let classificationResult = null;
-        let classificationText = 'UNCLASSIFIED';
-        let classificationColor = 'green';
         
         if (email.body) {
             classificationResult = this.classificationDetector.detectClassification(email.body);
             console.debug('Classification result:', classificationResult);
-            
-            if (classificationResult.detected) {
-                classificationText = classificationResult.text;
-                
-                // Only show warning color if classification is not supported by provider
-                const isSupportedByProvider = await this.isClassificationSupportedByProvider(classificationResult.text);
-                classificationColor = isSupportedByProvider ? 'green' : classificationResult.color;
-                
-                // Symmetrical classification messaging
-                if (isSupportedByProvider) {
-                    classificationText += ' - Safe for AI processing';
-                } else {
-                    classificationText += ' - Potentially unsafe for AI processing';
-                }
-            } else {
-                classificationText = 'UNCLASSIFIED - Safe for AI processing';
-            }
-        }
-        
-        const classificationElement = document.getElementById("email-classification");
-        if (classificationElement) {
-            classificationElement.textContent = classificationText;
-            classificationElement.className = `classification classification-${classificationColor}`;
-            console.debug('Set classification display:', classificationText, classificationColor);
         }
         
         // Store classification result for later use
         if (classificationResult) {
             email.classificationResult = classificationResult;
         }
+
+        // Context-aware UI adaptation (works behind the scenes)
+        this.adaptUIForContext(email.context);
+    }
+
+    /**
+     * Adapts the UI based on email context (sent vs inbox vs compose)
+     * @param {Object} context - Context information from EmailAnalyzer
+     */
+    adaptUIForContext(context) {
+        console.debug('Adapting UI for context:', context);
         
-        // Commented out fields for debugging purposes
-        // document.getElementById('email-from').textContent = email.from || 'Unknown';
-        // document.getElementById('email-recipients').textContent = email.recipients || 'Unknown';
-        // document.getElementById('email-length').textContent = `${email.bodyLength || 0} characters`;
+        if (!context) {
+            console.warn('No context provided for UI adaptation');
+            return;
+        }
+
+        // Log detailed context information for debugging
+        console.debug('Context details:', {
+            isSentMail: context.isSentMail,
+            isInbox: context.isInbox,
+            isCompose: context.isCompose,
+            folderType: context.folderType,
+            debugInfo: context.debugInfo
+        });
+        
+        // Log telemetry for context detection
+        this.logger.logEvent('email_context_detected', {
+            context_type: context.isSentMail ? 'sent' : (context.isCompose ? 'compose' : 'inbox'),
+            folder_detection_available: context.debugInfo ? context.debugInfo.folderDetectionAttempted : false,
+            folder_api_result: context.debugInfo ? context.debugInfo.folderApiResult : 'unknown',
+            detection_method: context.debugInfo ? context.debugInfo.detectionMethod : 'unknown',
+            email_comparison_used: context.debugInfo ? context.debugInfo.emailComparisonUsed : false,
+            folder_type: context.folderType || 'unknown'
+        }, 'Information', this.getUserEmailForTelemetry());
+        
+        try {
+            // Get UI elements that need adaptation
+            const analysisSection = document.getElementById('panel-analysis');
+            const responseSection = document.getElementById('panel-response');
+            
+            // Find buttons and UI elements for context-aware behavior
+            const analyzeButton = document.getElementById('analyze-email');
+            const generateResponseButton = document.getElementById('generate-response');
+            
+            // Apply context-specific adaptations (affects button behavior)
+            if (context.isCompose) {
+                console.debug('Applying compose mode UI adaptations');
+                this.adaptUIForComposeMode();
+            } else if (context.isSentMail) {
+                console.debug('Applying sent mail UI adaptations');
+                this.adaptUIForSentMail();
+            } else {
+                console.debug('Applying inbox mail UI adaptations');
+                this.adaptUIForInboxMail();
+            }
+
+        } catch (error) {
+            console.error('Error adapting UI for context:', error);
+        }
+    }
+
+    /**
+     * Adapts UI for compose mode (writing new email)
+     */
+    adaptUIForComposeMode() {
+        console.debug('Adapting UI for compose mode');
+        
+        // Hide analysis features since we're composing
+        this.setElementVisibility('analyze-email', false);
+        this.setElementVisibility('panel-analysis', false);
+        
+        // Show writing assistance features
+        this.setButtonText('generate-response', '✍️ Writing Assistant');
+        this.setElementVisibility('generate-response', true);
+        
+        // Update tab labels if they exist
+        this.setElementText('tab-analysis', '📝 Composition');
+        this.setElementText('tab-response', '✍️ Writing Help');
+    }
+
+    /**
+     * Adapts UI for sent mail (viewing previously sent emails)
+     */
+    adaptUIForSentMail() {
+        console.debug('Adapting UI for sent mail');
+        
+        // Show analysis with different focus
+        this.setButtonText('analyze-email', '📋 Analyze Sent Message');
+        this.setElementVisibility('analyze-email', true);
+        
+        // Change response generation to follow-up suggestions
+        this.setButtonText('generate-response', '📅 Follow-up Suggestions');
+        this.setElementVisibility('generate-response', true);
+        
+        // Update tab labels
+        this.setElementText('tab-analysis', '📋 Sent Analysis');
+        this.setElementText('tab-response', '📅 Follow-up');
+    }
+
+    /**
+     * Adapts UI for inbox mail (received emails)
+     */
+    adaptUIForInboxMail() {
+        console.debug('Adapting UI for inbox mail (received)');
+        
+        // Standard inbox functionality
+        this.setButtonText('analyze-email', '🔍 Analyze Email');
+        this.setElementVisibility('analyze-email', true);
+        
+        this.setButtonText('generate-response', '✉️ Generate Response');
+        this.setElementVisibility('generate-response', true);
+        
+        // Standard tab labels
+        this.setElementText('tab-analysis', '🔍 Analysis');
+        this.setElementText('tab-response', '✉️ Response');
+    }
+
+    /**
+     * Gets a human-readable context label
+     * @param {Object} context - Context information
+     * @returns {string} Context label
+     */
+    getContextLabel(context) {
+        if (context.isCompose) return '📝 COMPOSING';
+        if (context.isSentMail) return '📤 SENT MAIL';
+        if (context.isInbox) return '📥 INBOX';
+        return '📧 EMAIL';
+    }
+
+    /**
+     * Get CSS class for context display styling
+     * @param {Object} context - Email context object
+     * @returns {string} CSS class name
+     */
+    getContextClass(context) {
+        if (context.isCompose) return 'context-compose';
+        if (context.isSentMail) return 'context-sent';
+        if (context.isInbox) return 'context-inbox';
+        return 'context-inbox'; // default
+    }
+
+    /**
+     * Helper method to set element visibility
+     * @param {string} elementId - Element ID
+     * @param {boolean} visible - Whether element should be visible
+     */
+    setElementVisibility(elementId, visible) {
+        const element = document.getElementById(elementId);
+        if (element) {
+            element.style.display = visible ? '' : 'none';
+        }
+    }
+
+    /**
+     * Helper method to set button text
+     * @param {string} elementId - Button element ID
+     * @param {string} text - New button text
+     */
+    setButtonText(elementId, text) {
+        const element = document.getElementById(elementId);
+        if (element) {
+            element.textContent = text;
+        }
+    }
+
+    /**
+     * Helper method to set element text content
+     * @param {string} elementId - Element ID
+     * @param {string} text - New text content
+     */
+    setElementText(elementId, text) {
+        const element = document.getElementById(elementId);
+        if (element) {
+            element.textContent = text;
+        }
     }
 
     async attemptAutoAnalysis() {
@@ -503,12 +665,26 @@ class TaskpaneApp {
             console.info('Auto-generating response after analysis...');
             const responseConfig = this.getResponseConfiguration();
             
-            // Generate response using analysis data
-            this.currentResponse = await this.aiService.generateResponse(
-                this.currentEmail, 
-                this.currentAnalysis, 
-                { ...config, ...responseConfig }
-            );
+            // Check email context to determine response type
+            const emailContext = this.currentEmail.context || { isSentMail: false };
+            
+            if (emailContext.isSentMail) {
+                // Generate follow-up suggestions for sent mail
+                console.info('Generating follow-up suggestions for sent mail...');
+                this.currentResponse = await this.aiService.generateFollowupSuggestions(
+                    this.currentEmail, 
+                    this.currentAnalysis, 
+                    { ...config, ...responseConfig }
+                );
+            } else {
+                // Generate response for received mail
+                console.info('Generating response for received mail...');
+                this.currentResponse = await this.aiService.generateResponse(
+                    this.currentEmail, 
+                    this.currentAnalysis, 
+                    { ...config, ...responseConfig }
+                );
+            }
             
             // Display the response
             this.displayResponse(this.currentResponse);
@@ -528,12 +704,14 @@ class TaskpaneApp {
                 classification: classificationResult.text,
                 classification_level: classificationResult.level,
                 auto_response_generated: true,
+                email_context: this.currentEmail.context ? (this.currentEmail.context.isSentMail ? 'sent' : 'inbox') : 'unknown',
+                generation_type: 'standard_response',
                 refinement_count: this.refinementCount,
                 clipboard_used: this.hasUsedClipboard,
                 performance_metrics: {
                     start_time: Date.now()
                 }
-            }, 'Information', this.getRecipientEmailForTelemetry());
+            }, 'Information', this.getUserEmailForTelemetry());
             
             this.uiController.showStatus('Email analyzed and draft response generated automatically.');
             
@@ -821,7 +999,7 @@ class TaskpaneApp {
                 performance_metrics: {
                     start_time: Date.now()
                 }
-            }, 'Information', this.getRecipientEmailForTelemetry());
+            }, 'Information', this.getUserEmailForTelemetry());
             
             this.uiController.showStatus('Email analysis completed successfully.');
             
@@ -836,6 +1014,12 @@ class TaskpaneApp {
     async generateResponse() {
         if (!this.currentEmail) {
             this.uiController.showError('No email to respond to. Please analyze an email first.');
+            return;
+        }
+
+        // Check if this is sent mail context - handle differently
+        if (this.currentEmail.context && this.currentEmail.context.isSentMail) {
+            await this.generateFollowupSuggestions();
             return;
         }
 
@@ -934,6 +1118,94 @@ class TaskpaneApp {
         }
     }
 
+    async generateFollowupSuggestions() {
+        if (!this.currentEmail) {
+            this.uiController.showError('No email available for follow-up suggestions.');
+            return;
+        }
+
+        try {
+            this.uiController.showStatus('Generating follow-up suggestions...');
+            this.uiController.setButtonLoading('generate-response', true);
+            
+            // Get configuration
+            const config = this.getAIConfiguration();
+            const responseConfig = this.getResponseConfiguration();
+            
+            // Ensure we have analysis data - if not, run analysis first
+            let analysisData = this.currentAnalysis;
+            if (!analysisData) {
+                console.warn('No current analysis available, running analysis first');
+                this.uiController.showStatus('Analyzing sent email before generating follow-up suggestions...');
+                
+                try {
+                    await this.performAnalysis();
+                    analysisData = this.currentAnalysis;
+                    
+                    if (!analysisData) {
+                        analysisData = {
+                            keyPoints: ['Sent email content analyzed'],
+                            sentiment: 'neutral',
+                            responseStrategy: 'generate appropriate follow-up suggestions'
+                        };
+                    }
+                } catch (analysisError) {
+                    console.warn('Analysis failed, using default analysis:', analysisError);
+                    analysisData = {
+                        keyPoints: ['Sent email content analyzed'],
+                        sentiment: 'neutral', 
+                        responseStrategy: 'generate appropriate follow-up suggestions'
+                    };
+                }
+                
+                this.uiController.showStatus('Generating follow-up suggestions...');
+            }
+            
+            // Generate follow-up suggestions instead of response
+            this.currentResponse = await this.aiService.generateFollowupSuggestions(
+                this.currentEmail, 
+                analysisData,
+                { ...config, ...responseConfig }
+            );
+            
+            console.info('Follow-up suggestions generated:', this.currentResponse);
+            
+            // Log telemetry for follow-up suggestions generation
+            this.logger.logEvent('followup_suggestions_generated', {
+                model_service: config.service,
+                model_name: config.model,
+                email_length: this.currentEmail.bodyLength,
+                recipients_count: this.currentEmail.recipients.split(',').length,
+                suggestions_length: this.currentResponse.suggestions ? this.currentResponse.suggestions.length : 0,
+                analysis_available: !!analysisData,
+                generation_success: true,
+                refinement_count: this.refinementCount
+            }, 'Information', this.getUserEmailForTelemetry());
+            
+            // Display suggestions
+            this.displayResponse(this.currentResponse);
+            this.switchToResponseTab();
+            this.showRefineButton();
+            
+            this.uiController.showStatus('Follow-up suggestions generated successfully.');
+            
+        } catch (error) {
+            console.error('Follow-up suggestion generation failed:', error);
+            
+            // Log telemetry for failed follow-up suggestions
+            this.logger.logEvent('followup_suggestions_failed', {
+                error_message: error.message,
+                model_service: config ? config.service : 'unknown',
+                email_length: this.currentEmail ? this.currentEmail.bodyLength : 0,
+                analysis_available: !!analysisData
+            }, 'Error', this.getUserEmailForTelemetry());
+            
+            this.uiController.showError('Failed to generate follow-up suggestions. Please try again.');
+        } finally {
+            this.uiController.setButtonLoading('generate-response', false);
+        }
+    }
+
     async refineResponse() {
         const customInstructions = document.getElementById('custom-instructions').value.trim();
         const currentSettings = this.settingsManager.getSettings();
@@ -975,7 +1247,7 @@ class TaskpaneApp {
                 clipboard_used: this.hasUsedClipboard,
                 has_custom_instructions: hasCustomInstructions,
                 custom_instructions_length: customInstructions.length
-            }, 'Information', this.getRecipientEmailForTelemetry());
+            }, 'Information', this.getUserEmailForTelemetry());
             
         } catch (error) {
             console.error('Response refinement failed:', error);
@@ -1272,14 +1544,17 @@ class TaskpaneApp {
             return;
         }
         
-        if (!response || !response.text) {
+        if (!response || (!response.text && !response.suggestions)) {
             console.error('Invalid response object:', response);
             container.innerHTML = '<div class="error">Error: Invalid response received</div>';
             return;
         }
         
+        // Handle both regular responses (text) and follow-up suggestions (suggestions)
+        const responseContent = response.text || response.suggestions;
+        
         // Use separate formatting for display (less aggressive than clipboard)
-        const cleanText = this.formatTextForDisplay(response.text);
+        const cleanText = this.formatTextForDisplay(responseContent);
         
         container.innerHTML = `
             <div class="response-content">
@@ -1303,8 +1578,9 @@ class TaskpaneApp {
             // Get the original response text from the currentResponse object for better formatting
             let responseText = '';
             
-            if (this.currentResponse && this.currentResponse.text) {
-                responseText = this.currentResponse.text;
+            if (this.currentResponse && (this.currentResponse.text || this.currentResponse.suggestions)) {
+                // Handle both regular responses (text) and follow-up suggestions (suggestions)
+                responseText = this.currentResponse.text || this.currentResponse.suggestions;
             } else {
                 // Fallback to displayed content if currentResponse not available
                 const responseElement = document.getElementById('response-text-content');
@@ -1327,9 +1603,11 @@ class TaskpaneApp {
             
             // Log clipboard usage event
             this.logger.logEvent('response_copied', {
+                content_type: this.currentResponse.suggestions ? 'followup_suggestions' : 'standard_response',
+                email_context: this.currentEmail.context ? (this.currentEmail.context.isSentMail ? 'sent' : 'inbox') : 'unknown',
                 refinement_count: this.refinementCount,
                 response_length: formattedText.length
-            }, 'Information', this.getRecipientEmailForTelemetry());
+            }, 'Information', this.getUserEmailForTelemetry());
         } catch (error) {
             console.error('Failed to copy response:', error);
             this.uiController.showError('Failed to copy response to clipboard.');
@@ -2044,18 +2322,19 @@ class TaskpaneApp {
     }
 
     /**
-     * Extract the first recipient email address for telemetry context
-     * @returns {string|null} First recipient email or null
+     * Get the current Outlook user's email address for telemetry context
+     * @returns {string|null} Current user's email address or null
      */
-    getRecipientEmailForTelemetry() {
-        if (!this.currentEmail?.recipients) {
+    getUserEmailForTelemetry() {
+        // For telemetry, we always want the actual user's email (the person using the add-in),
+        // not the recipient's email, regardless of whether it's sent or inbox mail
+        try {
+            const userProfile = Office.context.mailbox.userProfile;
+            return userProfile ? userProfile.emailAddress : null;
+        } catch (error) {
+            console.warn('Unable to get user profile for telemetry:', error);
             return null;
         }
-        
-        // Parse recipient string to extract email addresses
-        // Recipients format: "To: Name <email@domain.com>, Name2 <email2@domain.com>"
-        const recipientMatch = this.currentEmail.recipients.match(/<([^>]+)>/);
-        return recipientMatch ? recipientMatch[1] : null;
     }
 
     getEmailIdentifiersForTelemetry() {

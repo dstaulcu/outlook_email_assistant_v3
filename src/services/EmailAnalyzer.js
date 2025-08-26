@@ -13,158 +13,304 @@ export class EmailAnalyzer {
      * @returns {Promise<Object>} Email data object
      */
     async getCurrentEmail() {
-        return new Promise((resolve, reject) => {
-            if (!Office.context.mailbox.item) {
-                reject(new Error('No email item selected'));
-                return;
+        if (!Office.context.mailbox.item) {
+            throw new Error('No email item selected');
+        }
+
+        const item = Office.context.mailbox.item;
+        this.currentItem = item;
+
+        // Create promises for async property access
+        const getFromAsync = () => {
+            return new Promise((resolveFrom) => {
+                if (item.from && typeof item.from.getAsync === 'function') {
+                    item.from.getAsync((result) => {
+                        if (result.status === Office.AsyncResultStatus.Succeeded) {
+                            resolveFrom(result.value);
+                        } else {
+                            console.warn('Failed to get from async:', result.error);
+                            resolveFrom(null);
+                        }
+                    });
+                } else {
+                    resolveFrom(item.from);
+                }
+            });
+        };
+
+        const getRecipientsAsync = () => {
+            return new Promise((resolveRecipients) => {
+                if (item.to && typeof item.to.getAsync === 'function') {
+                    item.to.getAsync((result) => {
+                        if (result.status === Office.AsyncResultStatus.Succeeded) {
+                            resolveRecipients({ to: result.value, cc: item.cc, bcc: item.bcc });
+                        } else {
+                            console.warn('Failed to get recipients async:', result.error);
+                            resolveRecipients({ to: null, cc: item.cc, bcc: item.bcc });
+                        }
+                    });
+                } else {
+                    resolveRecipients({ to: item.to, cc: item.cc, bcc: item.bcc });
+                }
+            });
+        };
+
+        const getSubjectAsync = () => {
+            return new Promise((resolveSubject) => {
+                if (item.subject && typeof item.subject.getAsync === 'function') {
+                    item.subject.getAsync((result) => {
+                        if (result.status === Office.AsyncResultStatus.Succeeded) {
+                            resolveSubject(result.value);
+                        } else {
+                            console.warn('Failed to get subject async:', result.error);
+                            resolveSubject(item.subject);
+                        }
+                    });
+                } else {
+                    resolveSubject(item.subject);
+                }
+            });
+        };
+
+        const getDateAsync = () => {
+            return new Promise((resolveDate) => {
+                // For compose mode, especially replies, we don't want to show a misleading sent date
+                // We'll determine this based on the item properties and context
+                // More accurate compose mode detection:
+                const isComposeMode = item.itemType === Office.MailboxEnums.ItemType.Message && 
+                                     !item.internetMessageId && 
+                                     !item.dateTimeCreated;
+                
+                console.debug('Compose mode detection details:', {
+                    itemType: item.itemType,
+                    itemClass: item.itemClass, 
+                    internetMessageId: !!item.internetMessageId,
+                    dateTimeCreated: !!item.dateTimeCreated,
+                    hasInternetMessageId: !!item.internetMessageId,
+                    hasDateTimeCreated: !!item.dateTimeCreated,
+                    isComposeMode: isComposeMode
+                });
+                
+                if (isComposeMode) {
+                    // In compose mode (including replies), don't show a sent date
+                    console.debug('In compose mode, using null date');
+                    resolveDate(null);
+                } else if (item.itemType === Office.MailboxEnums.ItemType.Message) {
+                    // This should be a received email - use dateTimeCreated
+                    const emailDate = item.dateTimeCreated ? new Date(item.dateTimeCreated) : new Date();
+                    console.debug('Using email date for received message:', emailDate);
+                    resolveDate(emailDate);
+                } else {
+                    // For other item types
+                    console.debug('Other item type, using null date');
+                    resolveDate(null);
+                }
+            });
+        };
+
+        // Get email body and other properties
+        const [bodyText, fromValue, recipientsValue, subjectValue, dateValue] = await Promise.all([
+            new Promise((resolveBody, rejectBody) => {
+                item.body.getAsync(Office.CoercionType.Text, (result) => {
+                    if (result.status === Office.AsyncResultStatus.Failed) {
+                        rejectBody(new Error('Failed to get email body: ' + result.error.message));
+                        return;
+                    }
+                    resolveBody(result.value || '');
+                });
+            }),
+            getFromAsync(),
+            getRecipientsAsync(),
+            getSubjectAsync(),
+            getDateAsync()
+        ]);
+
+        console.log('Async property results:', {
+            subject: subjectValue,
+            from: fromValue,
+            recipients: recipientsValue,
+            date: dateValue,
+            itemType: item.itemType
+        });
+
+        const userProfile = Office.context.mailbox.userProfile;
+        
+        // Check if this is a reply after we have the subject
+        const subjectStr = this.getSubjectString({ subject: subjectValue });
+        const isReply = subjectStr && (subjectStr.startsWith('RE:') || subjectStr.startsWith('Re:') || subjectStr.startsWith('FW:') || subjectStr.startsWith('Fw:'));
+        
+        // Detect sent mail context
+        const contextInfo = await this.detectEmailContext(item, fromValue, userProfile);
+        
+        const emailData = {
+            subject: subjectStr,
+            from: this.getFromAddressFromValue(fromValue, item),
+            recipients: this.getRecipientsFromValue(recipientsValue),
+            body: bodyText,
+            bodyLength: bodyText.length,
+            date: dateValue,
+            isReply: isReply, // Add this flag
+            hasAttachments: (item.attachments && item.attachments.length > 0),
+            itemType: item.itemType,
+            conversationId: item.conversationId,
+            // Additional Office.js identifiers for telemetry (non-content-revealing)
+            itemId: item.itemId || null,
+            hasInternetMessageId: !!item.internetMessageId,
+            itemClass: item.itemClass || null,
+            normalizedSubject: item.normalizedSubject || null,
+            sender: userProfile ? `${userProfile.displayName || 'Unknown'} <${userProfile.emailAddress || 'unknown@domain.com'}>` : 'Unknown Sender',
+            // Add context information for UI adaptation
+            context: contextInfo
+        };
+
+        console.log('Final processed email data:', emailData);
+        return emailData;
+    }
+
+    /**
+     * Detects the email context (sent vs received) for UI adaptation
+     * @param {Office.Item} item - The Outlook item
+     * @param {Object} fromValue - The from value from async call
+     * @param {Object} userProfile - Current user profile
+     * @returns {Promise<Object>} Context information
+     */
+    async detectEmailContext(item, fromValue, userProfile) {
+        try {
+            const context = {
+                isSentMail: false,
+                isInbox: false,
+                isCompose: false,
+                folderType: 'unknown',
+                userEmail: userProfile?.emailAddress?.toLowerCase(),
+                senderEmail: null,
+                debugInfo: {}
+            };
+
+            // Detect compose mode first
+            const isComposeMode = item.itemType === Office.MailboxEnums.ItemType.Message && 
+                                 !item.internetMessageId && 
+                                 !item.dateTimeCreated;
+            context.isCompose = isComposeMode;
+            context.debugInfo.isComposeMode = isComposeMode;
+
+            if (isComposeMode) {
+                context.folderType = 'compose';
+                console.log('Detected compose mode:', context);
+                return context;
             }
 
-            const item = Office.context.mailbox.item;
-            this.currentItem = item;
-
-            // Create promises for async property access
-            const getFromAsync = () => {
-                return new Promise((resolveFrom) => {
-                    if (item.from && typeof item.from.getAsync === 'function') {
-                        item.from.getAsync((result) => {
-                            if (result.status === Office.AsyncResultStatus.Succeeded) {
-                                resolveFrom(result.value);
-                            } else {
-                                console.warn('Failed to get from async:', result.error);
-                                resolveFrom(null);
-                            }
-                        });
-                    } else {
-                        resolveFrom(item.from);
-                    }
-                });
-            };
-
-            const getRecipientsAsync = () => {
-                return new Promise((resolveRecipients) => {
-                    if (item.to && typeof item.to.getAsync === 'function') {
-                        item.to.getAsync((result) => {
-                            if (result.status === Office.AsyncResultStatus.Succeeded) {
-                                resolveRecipients({ to: result.value, cc: item.cc, bcc: item.bcc });
-                            } else {
-                                console.warn('Failed to get recipients async:', result.error);
-                                resolveRecipients({ to: null, cc: item.cc, bcc: item.bcc });
-                            }
-                        });
-                    } else {
-                        resolveRecipients({ to: item.to, cc: item.cc, bcc: item.bcc });
-                    }
-                });
-            };
-
-            const getSubjectAsync = () => {
-                return new Promise((resolveSubject) => {
-                    if (item.subject && typeof item.subject.getAsync === 'function') {
-                        item.subject.getAsync((result) => {
-                            if (result.status === Office.AsyncResultStatus.Succeeded) {
-                                resolveSubject(result.value);
-                            } else {
-                                console.warn('Failed to get subject async:', result.error);
-                                resolveSubject(item.subject);
-                            }
-                        });
-                    } else {
-                        resolveSubject(item.subject);
-                    }
-                });
-            };
-
-            const getDateAsync = () => {
-                return new Promise((resolveDate) => {
+            // PRIMARY METHOD: Use folder information to determine context
+            let folderName = null;
+            try {
+                console.log('Attempting to get folder information...');
+                console.log('Office.context.mailbox.item.parent:', Office.context.mailbox.item.parent);
+                console.log('Office.context.mailbox.displayedFolder:', Office.context.mailbox.displayedFolder);
+                
+                // Try multiple ways to get folder information
+                if (Office.context.mailbox.item.parent) {
+                    folderName = Office.context.mailbox.item.parent.displayName;
+                    console.log('Got folder name from item.parent:', folderName);
+                } else if (Office.context.mailbox.displayedFolder) {
+                    folderName = Office.context.mailbox.displayedFolder.displayName;
+                    console.log('Got folder name from displayedFolder:', folderName);
+                } else {
+                    console.log('No folder information available from either method');
+                }
+                
+                if (folderName) {
+                    const folderLower = folderName.toLowerCase();
+                    context.debugInfo.folderName = folderName;
                     
+                    console.log('Found folder name:', folderName, 'lowercase:', folderLower);
                     
-                    // For compose mode, especially replies, we don't want to show a misleading sent date
-                    // We'll determine this based on the item properties and context
-                    // More accurate compose mode detection:
-                    const isComposeMode = item.itemType === Office.MailboxEnums.ItemType.Message && 
-                                         !item.internetMessageId && 
-                                         !item.dateTimeCreated;
+                    // Check for sent items folder
+                    if (folderLower.includes('sent') || folderLower.includes('outbox') || 
+                        folderLower.includes('enviados') || folderLower.includes('gesendet')) {
+                        context.isSentMail = true;
+                        context.folderType = 'sent';
+                        context.isInbox = false;
+                        console.log('Folder indicates SENT MAIL:', folderName);
+                        return context;
+                    }
                     
-                    console.debug('Compose mode detection details:', {
-                        itemType: item.itemType,
-                        itemClass: item.itemClass, 
-                        internetMessageId: !!item.internetMessageId,
-                        dateTimeCreated: !!item.dateTimeCreated,
-                        hasInternetMessageId: !!item.internetMessageId,
-                        hasDateTimeCreated: !!item.dateTimeCreated,
-                        isComposeMode: isComposeMode
+                    // Check for inbox folder
+                    if (folderLower.includes('inbox') || folderLower.includes('posteingang') || 
+                        folderLower.includes('recibidos') || folderLower.includes('boîte de réception')) {
+                        context.isSentMail = false;
+                        context.folderType = 'inbox';
+                        context.isInbox = true;
+                        console.log('Folder indicates INBOX:', folderName);
+                        return context;
+                    }
+                    
+                    // For other folders, fall through to secondary detection
+                    console.log('Unknown folder type, using secondary detection:', folderName);
+                } else {
+                    console.log('No folder name found, falling back to email comparison');
+                }
+            } catch (folderError) {
+                console.warn('Could not access folder information:', folderError);
+                context.debugInfo.folderError = folderError.message;
+            }
+
+            // SECONDARY METHOD: Email address comparison (only if folder detection failed)
+            // Re-enabled with more careful logic for sent mail detection
+            if (fromValue?.emailAddress) {
+                context.senderEmail = fromValue.emailAddress.toLowerCase();
+                context.debugInfo.fromValue = fromValue;
+                
+                console.log('Email comparison data:', {
+                    userEmail: context.userEmail,
+                    senderEmail: context.senderEmail,
+                    userProfile: userProfile
+                });
+                
+                if (context.userEmail && context.senderEmail) {
+                    const isUserSender = context.userEmail === context.senderEmail;
+                    context.debugInfo.emailComparison = {
+                        userEmail: context.userEmail,
+                        senderEmail: context.senderEmail,
+                        match: isUserSender
+                    };
+                    
+                    console.log('Email comparison result:', {
+                        isUserSender,
+                        userEmail: context.userEmail,
+                        senderEmail: context.senderEmail
                     });
                     
-                    if (isComposeMode) {
-                        // In compose mode (including replies), don't show a sent date
-                        console.debug('In compose mode, using null date');
-                        resolveDate(null);
-                    } else if (item.itemType === Office.MailboxEnums.ItemType.Message) {
-                        // This should be a received email - use dateTimeCreated
-                        const emailDate = item.dateTimeCreated ? new Date(item.dateTimeCreated) : new Date();
-                        console.debug('Using email date for received message:', emailDate);
-                        resolveDate(emailDate);
-                    } else {
-                        // For other item types
-                        console.debug('Other item type, using null date');
-                        resolveDate(null);
+                    if (isUserSender) {
+                        context.isSentMail = true;
+                        context.folderType = 'sent';
+                        context.isInbox = false;
+                        console.log('Email comparison indicates SENT MAIL - user is sender');
+                        return context;
                     }
-                });
+                }
+            }
+
+            // DEFAULT: If we can't determine definitively from folder, assume inbox
+            context.isSentMail = false;
+            context.isInbox = true;
+            context.folderType = 'inbox';
+            context.debugInfo.usedDefault = true;
+            context.debugInfo.reason = 'No definitive folder information available, defaulting to inbox';
+            
+            console.log('Using default INBOX detection (folder detection failed):', context);
+            return context;
+
+        } catch (error) {
+            console.error('Error detecting email context:', error);
+            return {
+                isSentMail: false,
+                isInbox: true,
+                isCompose: false,
+                folderType: 'inbox',
+                userEmail: userProfile?.emailAddress?.toLowerCase(),
+                senderEmail: null,
+                debugInfo: { error: error.message }
             };
-
-            // Get email body and other properties
-            Promise.all([
-                new Promise((resolveBody, rejectBody) => {
-                    item.body.getAsync(Office.CoercionType.Text, (result) => {
-                        if (result.status === Office.AsyncResultStatus.Failed) {
-                            rejectBody(new Error('Failed to get email body: ' + result.error.message));
-                            return;
-                        }
-                        resolveBody(result.value || '');
-                    });
-                }),
-                getFromAsync(),
-                getRecipientsAsync(),
-                getSubjectAsync(),
-                getDateAsync()
-            ]).then(([bodyText, fromValue, recipientsValue, subjectValue, dateValue]) => {
-                console.log('Async property results:', {
-                    subject: subjectValue,
-                    from: fromValue,
-                    recipients: recipientsValue,
-                    date: dateValue,
-                    itemType: item.itemType
-                });
-
-                const userProfile = Office.context.mailbox.userProfile;
-                
-                // Check if this is a reply after we have the subject
-                const subjectStr = this.getSubjectString({ subject: subjectValue });
-                const isReply = subjectStr && (subjectStr.startsWith('RE:') || subjectStr.startsWith('Re:') || subjectStr.startsWith('FW:') || subjectStr.startsWith('Fw:'));
-                
-                const emailData = {
-                    subject: subjectStr,
-                    from: this.getFromAddressFromValue(fromValue, item),
-                    recipients: this.getRecipientsFromValue(recipientsValue),
-                    body: bodyText,
-                    bodyLength: bodyText.length,
-                    date: dateValue,
-                    isReply: isReply, // Add this flag
-                    hasAttachments: (item.attachments && item.attachments.length > 0),
-                    itemType: item.itemType,
-                    conversationId: item.conversationId,
-                    // Additional Office.js identifiers for telemetry (non-content-revealing)
-                    itemId: item.itemId || null,
-                    hasInternetMessageId: !!item.internetMessageId,
-                    itemClass: item.itemClass || null,
-                    normalizedSubject: item.normalizedSubject || null,
-                    sender: userProfile ? `${userProfile.displayName || 'Unknown'} <${userProfile.emailAddress || 'unknown@domain.com'}>` : 'Unknown Sender'
-                };
-
-                console.log('Final processed email data:', emailData);
-                resolve(emailData);
-            }).catch(reject);
-        });
+        }
     }
 
     /**

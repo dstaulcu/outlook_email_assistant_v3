@@ -104,7 +104,7 @@ export class Logger {
         return {
             eventType: eventType,
             timestamp: timestamp,
-            source: this.eventSource,
+            source: this.eventSource.toLowerCase().replace(/\s+/g, '_'),
             version: process.env.PACKAGE_VERSION || 'unknown',
             sessionId: sessionId,
             userContext: userContext,

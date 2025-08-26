@@ -1008,6 +1008,35 @@ section h3 {
     100% { opacity: 1; }
 }
 
+/* === Context Display Styles === */
+.context-display {
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: var(--border-radius);
+    font-weight: 600;
+    font-size: var(--font-size-sm);
+    text-align: center;
+    margin: var(--spacing-xs) 0;
+    border: 2px solid;
+}
+
+.context-sent {
+    background-color: #e1f5fe;
+    color: #0277bd;
+    border-color: #b3e5fc;
+}
+
+.context-inbox {
+    background-color: #f3e5f5;
+    color: #7b1fa2;
+    border-color: #ce93d8;
+}
+
+.context-compose {
+    background-color: #e8f5e8;
+    color: #2e7d32;
+    border-color: #a5d6a7;
+}
+
 /* === Print Styles === */
 @media print {
     .header,
