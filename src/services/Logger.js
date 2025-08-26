@@ -50,10 +50,6 @@ export class Logger {
             telemetry: {
                 enabled: false,
                 provider: "local"
-            },
-            environment: {
-                name: "unknown",
-                version: "1.0.0"
             }
         };
     }
@@ -98,148 +94,136 @@ export class Logger {
      * @param {string} contextEmail - Optional email context for user identification
      * @returns {Object} Log entry object
      */
-    createLogEntry(eventType, data, contextEmail = null) {
-        const baseEntry = {
-            eventType: eventType,
-            timestamp: new Date().toISOString(),
-            source: this.eventSource,
-            version: '1.0.0',
-            sessionId: this.getSessionId(),
-            userId: this.getUserId(contextEmail)
-        };
+    createLogEntry(eventType, data, contextEmail) {
+        const timestamp = new Date().toISOString();
+        const sessionId = this.getSessionId();
 
-        // Sanitize sensitive data
-        const sanitizedData = this.sanitizeData(data);
+        // Always include consistent user context
+        const userContext = this.getUserContext(contextEmail);
 
         return {
-            ...baseEntry,
-            ...sanitizedData
+            eventType: eventType,
+            timestamp: timestamp,
+            source: this.eventSource,
+            version: process.env.PACKAGE_VERSION || 'unknown',
+            sessionId: sessionId,
+            userContext: userContext,
+            ...data
         };
     }
 
     /**
-     * Sanitizes data to remove sensitive information
-     * @param {Object} data - Raw data object
-     * @returns {Object} Sanitized data
+     * Get consistent user context for all events
+     * @param {string} contextEmail - Optional email override
+     * @returns {Object} User context object
      */
-    sanitizeData(data) {
-        const sanitized = { ...data };
-
-        // Remove sensitive fields
-        const sensitiveFields = [
-            'apiKey', 'api_key', 'password', 'token', 'secret',
-            'emailBody', 'email_body', 'content', 'body',
-            'personalInfo', 'personal_info'
-        ];
-
-        sensitiveFields.forEach(field => {
-            if (sanitized[field]) {
-                delete sanitized[field];
-            }
-        });
-
-        // Sanitize classification data
-        if (sanitized.classification && sanitized.subject) {
-            sanitized.subject = '[REDACTED]';
+    getUserContext(contextEmail) {
+        // If specific email provided, use it
+        if (contextEmail) {
+            return { email: contextEmail };
         }
 
-        // Ensure no long text fields
-        Object.keys(sanitized).forEach(key => {
-            if (typeof sanitized[key] === 'string' && sanitized[key].length > 500) {
-                sanitized[key] = sanitized[key].substring(0, 500) + '...[TRUNCATED]';
+        // Try to get user email from Office context
+        try {
+            if (typeof Office !== 'undefined' && Office.context && Office.context.mailbox && Office.context.mailbox.userProfile) {
+                const userProfile = Office.context.mailbox.userProfile;
+                if (userProfile.emailAddress) {
+                    return { email: userProfile.emailAddress };
+                }
             }
-        });
+        } catch (error) {
+            console.debug('Could not retrieve Office user profile:', error);
+        }
 
-        return sanitized;
+        // Fallback: Check if we have cached user context
+        if (this.cachedUserContext) {
+            return this.cachedUserContext;
+        }
+
+        // Return sanitized context for privacy
+        return { email: 'unknown@domain.com' };
     }
 
     /**
-     * Logs an event to Splunk HEC
+     * Cache user context for consistent telemetry
+     * @param {string} email - User email address
+     */
+    cacheUserContext(email) {
+        if (email && email.includes('@')) {
+            this.cachedUserContext = { email: email };
+        }
+    }
+
+    /**
+     * Log to Splunk HEC
      * @param {string} eventType - Event type
-     * @param {Object} logEntry - Log entry data
+     * @param {Object} logEntry - Log entry
      * @param {string} level - Log level
      */
     async logToSplunk(eventType, logEntry, level) {
-        try {
-            if (!this.telemetryConfig?.telemetry?.splunk) {
-                console.warn('Splunk configuration not available');
-                return;
-            }
+        const splunkData = {
+            time: Math.floor(Date.now() / 1000),
+            host: this.telemetryConfig?.environment?.host || 'localhost',
+            source: this.eventSource.toLowerCase().replace(/\s+/g, '_'),
+            sourcetype: 'json:outlook_email_assistant',
+            event: logEntry
+        };
 
-            const splunkConfig = this.telemetryConfig.telemetry.splunk;
-            const splunkEvent = {
-                time: Math.floor(Date.now() / 1000), // Unix timestamp
-                host: window.location.hostname,
-                index: splunkConfig.index,
-                source: splunkConfig.source,
-                sourcetype: splunkConfig.sourcetype,
-                event: {
-                    ...logEntry,
-                    level: level,
-                    environment: this.telemetryConfig.environment
-                }
-            };
-
-            console.debug('Preparing Splunk event:', splunkEvent);
-
-            // Add to Splunk queue for batch processing
-            this.splunkQueue.push(splunkEvent);
-
-            // Process Splunk queue if it's getting full or on timer
-            if (this.splunkQueue.length >= (splunkConfig.batchSize || 10)) {
-                await this.flushSplunkQueue();
-            }
-
-        } catch (error) {
-            console.error('Failed to log to Splunk:', error);
+        this.splunkQueue.push(splunkData);
+        
+        // Queue management - prevent unlimited growth
+        if (this.splunkQueue.length > 1000) {
+            console.warn('[Logger] Queue size exceeded 1000 events, removing oldest entries');
+            this.splunkQueue = this.splunkQueue.slice(-500); // Keep most recent 500
+        }
+        
+        console.debug('[Logger] Event queued for Splunk, queue size:', this.splunkQueue.length);
+        
+        // Auto-flush if queue is large or at regular intervals
+        if (this.splunkQueue.length >= 10) {
+            await this.flushSplunkQueue();
         }
     }
 
     /**
-     * Logs an event to API Gateway
+     * Log to API Gateway
      * @param {string} eventType - Event type
-     * @param {Object} logEntry - Log entry data  
+     * @param {Object} logEntry - Log entry
      * @param {string} level - Log level
      */
     async logToApiGateway(eventType, logEntry, level) {
         try {
-            if (!this.telemetryConfig?.telemetry?.api_gateway) {
-                console.warn('API Gateway configuration not available');
-                return;
-            }
-
-            const apiGatewayConfig = this.telemetryConfig.telemetry.api_gateway;
+            console.debug('Preparing API Gateway event:', logEntry);
             
-            // Create event in Splunk-compatible format for the API Gateway to forward
-            const splunkEvent = {
+            const apiGatewayData = {
                 time: Math.floor(Date.now() / 1000),
-                host: window.location.hostname,
-                source: "outlook_addon", 
-                sourcetype: "json:outlook_email_assistant",
-                event: {
-                    ...logEntry,
-                    level: level,
-                    environment: this.telemetryConfig.environment
-                }
+                host: this.telemetryConfig?.environment?.host || 'localhost',
+                source: this.eventSource.toLowerCase().replace(/\s+/g, '_'),
+                sourcetype: 'json:outlook_email_assistant',
+                event: logEntry
             };
 
-            console.debug('Preparing API Gateway event:', splunkEvent);
-
-            // Add to Splunk queue for batch processing (reuse the same queue)
-            this.splunkQueue.push(splunkEvent);
-
-            // Process queue if it's getting full or on timer
-            if (this.splunkQueue.length >= (apiGatewayConfig.batchSize || 10)) {
+            this.splunkQueue.push(apiGatewayData);
+            
+            // Queue management - prevent unlimited growth
+            if (this.splunkQueue.length > 1000) {
+                console.warn('[Logger] Queue size exceeded 1000 events, removing oldest entries');
+                this.splunkQueue = this.splunkQueue.slice(-500);
+            }
+            
+            console.debug('[Logger] Event queued for API Gateway, queue size:', this.splunkQueue.length);
+            
+            // Auto-flush if queue is large
+            if (this.splunkQueue.length >= 10) {
                 await this.flushApiGatewayQueue();
             }
-
         } catch (error) {
-            console.error('Failed to log to API Gateway:', error);
+            console.error('Error adding event to API Gateway queue:', error);
         }
     }
 
     /**
-     * Flush Splunk queue to HEC endpoint
+     * Flush queue to Splunk HEC endpoint
      */
     async flushSplunkQueue() {
         if (this.splunkQueue.length === 0) return;
@@ -252,92 +236,65 @@ export class Logger {
 
             console.debug(`[Logger] Flushing ${events.length} events to Splunk HEC`);
 
-            // Prepare fetch options
             const fetchOptions = {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Splunk ${splunkConfig.hecToken}`,
+                    'Authorization': `Splunk ${splunkConfig.token}`,
                     'Content-Type': 'application/json'
                 },
                 body: events.map(event => JSON.stringify(event)).join('\n')
             };
 
-            // For development, if validateCertificate is false and endpoint is HTTPS,
-            // warn user to use HTTP endpoint instead
-            if (!splunkConfig.validateCertificate && splunkConfig.hecEndpoint.startsWith('https://')) {
-                console.warn('Certificate validation disabled but HTTPS endpoint used. Consider using HTTP endpoint for development.');
+            if (!splunkConfig.validateCertificate) {
+                fetchOptions.rejectUnauthorized = false;
             }
 
-            console.debug(`[Logger] Attempting to send to: ${splunkConfig.hecEndpoint}`);
             console.debug(`[Logger] Request headers:`, fetchOptions.headers);
-            
+
             const response = await fetch(splunkConfig.hecEndpoint, fetchOptions);
 
             console.debug(`[Logger] Response status: ${response.status} ${response.statusText}`);
 
             if (response.ok) {
                 console.info('Successfully sent events to Splunk HEC');
-                
-                // Reset connection error state on successful connection
                 this.splunkConnectionError = false;
                 this.splunkRetryCount = 0;
-                
-                // Log successful telemetry transmission
-                const result = await response.json();
-                console.debug('Splunk HEC response:', result);
             } else {
-                console.error('Failed to send events to Splunk HEC:', response.status, response.statusText);
+                console.error('Failed to send events to Splunk HEC:', response.status);
                 
-                // Re-queue events for retry (with limit)
                 if (events.length < 100) {
                     this.splunkQueue.unshift(...events);
                 }
             }
 
         } catch (error) {
-            console.debug(`[Logger] Fetch error details:`, {
+            console.debug(`[Logger] Splunk HEC error details:`, {
                 message: error.message,
                 name: error.name,
                 stack: error.stack?.substring(0, 200)
             });
             
-            // Handle connection errors more gracefully
-            if (error.message.includes('fetch') || 
-                error.message.includes('ERR_CONNECTION_REFUSED') ||
-                error.message.includes('ERR_CERT_AUTHORITY_INVALID') ||
-                error.message.includes('ERR_CERT_COMMON_NAME_INVALID') ||
-                error.message.includes('ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS')) {
-                
-                // Special handling for private network access errors
-                if (error.message.includes('ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS')) {
-                    if (!this.splunkConnectionError) {
-                        console.warn('Private Network Access blocked connection to localhost. Office add-ins cannot access localhost directly. Consider using a proxy or cloud endpoint for telemetry.');
-                        this.splunkConnectionError = true;
+            if (error.message.includes('certificate') || error.message.includes('SSL') || error.message.includes('TLS')) {
+                if (!this.splunkConnectionError) {
+                    const splunkConfig = this.telemetryConfig.telemetry.splunk;
+                    if (!splunkConfig.validateCertificate && splunkConfig.hecEndpoint.startsWith('https://')) {
+                        const httpEndpoint = splunkConfig.hecEndpoint.replace('https://', 'http://');
+                        console.warn(`[Logger] SSL certificate error detected. Since validateCertificate=false, consider changing endpoint from ${splunkConfig.hecEndpoint} to ${httpEndpoint}`);
+                    } else {
+                        console.warn('Splunk HEC SSL certificate validation failed');
                     }
+                    this.splunkConnectionError = true;
                 }
-                // Special handling for certificate errors
-                else if (error.message.includes('ERR_CERT_')) {
-                    if (!this.splunkConnectionError) {
-                        const splunkConfig = this.telemetryConfig.telemetry.splunk;
-                        if (!splunkConfig.validateCertificate && splunkConfig.hecEndpoint.startsWith('https://')) {
-                            const httpEndpoint = splunkConfig.hecEndpoint.replace('https://', 'http://');
-                            console.warn(`[Logger] SSL certificate error detected. Since validateCertificate=false, consider changing endpoint from ${splunkConfig.hecEndpoint} to ${httpEndpoint}`);
-                        } else {
-                            console.warn('Splunk HEC SSL certificate validation failed');
-                        }
-                        this.splunkConnectionError = true;
-                    }
-                } else if (!this.splunkConnectionError) {
+            } else if (error.message.includes('fetch') || error.message.includes('NetworkError')) {
+                if (!this.splunkConnectionError) {
                     console.warn('Splunk HEC connection unavailable, events will be queued');
                     this.splunkConnectionError = true;
                 }
                 
-                // Re-queue events for retry (with limit)
-                if (events.length < 100) { // Prevent infinite queue growth
+                if (events.length < 100) {
                     this.splunkQueue.unshift(...events);
                     this.splunkRetryCount++;
                     
-                    // If too many retries, clear the queue to prevent memory issues
                     if (this.splunkRetryCount > this.maxRetries) {
                         console.warn('Max Splunk retry attempts reached, clearing queue');
                         this.splunkQueue = [];
@@ -351,7 +308,7 @@ export class Logger {
     }
 
     /**
-     * Flush queue to API Gateway endpoint
+     * Flush queue to API Gateway endpoint with exponential backoff
      */
     async flushApiGatewayQueue() {
         if (this.splunkQueue.length === 0) return;
@@ -364,7 +321,6 @@ export class Logger {
 
             console.debug(`[Logger] Flushing ${events.length} events to API Gateway`);
 
-            // Prepare fetch options - Send events one by one like Splunk HEC
             const fetchOptions = {
                 method: 'POST',
                 headers: {
@@ -381,23 +337,32 @@ export class Logger {
 
             if (response.ok) {
                 console.info('Successfully sent events to API Gateway');
-                
-                // Reset connection error state on successful connection
                 this.splunkConnectionError = false;
                 this.splunkRetryCount = 0;
-                
-                // Log successful telemetry transmission
                 const result = await response.json();
                 console.debug('API Gateway response:', result);
             } else {
-                console.error('Failed to send events to API Gateway:', response.status, response.statusText);
-                
-                // Re-queue events for retry (with limit)
-                if (events.length < 100) {
-                    this.splunkQueue.unshift(...events);
+                // Only retry on transient errors (5xx, 429), not on 400/401/403
+                const status = response.status;
+                const isTransient = (status >= 500 && status < 600) || status === 429;
+                if (isTransient) {
+                    this.splunkRetryCount++;
+                    const backoff = Math.min(1000 * Math.pow(2, this.splunkRetryCount - 1), 8000);
+                    if (this.splunkRetryCount <= this.maxRetries) {
+                        console.warn(`Transient error (${status}). Retrying in ${backoff}ms (attempt ${this.splunkRetryCount}/${this.maxRetries})`);
+                        setTimeout(() => {
+                            this.splunkQueue.unshift(...events);
+                            this.flushApiGatewayQueue();
+                        }, backoff);
+                    } else {
+                        console.error('Max API Gateway retry attempts reached, dropping events');
+                        this.splunkRetryCount = 0;
+                    }
+                } else {
+                    console.error(`Permanent error from API Gateway (${status}). Dropping events and not retrying.`);
+                    this.splunkRetryCount = 0;
                 }
             }
-
         } catch (error) {
             console.debug(`[Logger] API Gateway error details:`, {
                 message: error.message,
@@ -405,27 +370,25 @@ export class Logger {
                 stack: error.stack?.substring(0, 200)
             });
             
-            // Handle connection errors
             if (error.message.includes('fetch') || error.message.includes('NetworkError')) {
                 if (!this.splunkConnectionError) {
                     console.warn('API Gateway connection unavailable, events will be queued');
                     this.splunkConnectionError = true;
                 }
-                
-                // Re-queue events for retry (with limit)
-                if (events.length < 100) {
-                    this.splunkQueue.unshift(...events);
-                    this.splunkRetryCount++;
-                    
-                    // If too many retries, clear the queue to prevent memory issues
-                    if (this.splunkRetryCount > this.maxRetries) {
-                        console.warn('Max API Gateway retry attempts reached, clearing queue');
-                        this.splunkQueue = [];
-                        this.splunkRetryCount = 0;
-                    }
+                this.splunkRetryCount++;
+                const backoff = Math.min(1000 * Math.pow(2, this.splunkRetryCount - 1), 8000);
+                if (this.splunkRetryCount <= this.maxRetries) {
+                    setTimeout(() => {
+                        this.splunkQueue.unshift(...events);
+                        this.flushApiGatewayQueue();
+                    }, backoff);
+                } else {
+                    console.error('Max API Gateway retry attempts reached (network error), dropping events');
+                    this.splunkRetryCount = 0;
                 }
             } else {
                 console.error('Error flushing API Gateway queue:', error);
+                this.splunkRetryCount = 0;
             }
         }
     }
@@ -465,22 +428,8 @@ export class Logger {
         if (this.splunkFlushInterval) {
             clearInterval(this.splunkFlushInterval);
             this.splunkFlushInterval = null;
-            console.log('Stopped telemetry auto-flush');
+            console.debug('[Logger] Stopped auto-flush');
         }
-    }
-
-    /**
-     * Logs classification warning override
-     * @param {Object} details - Override details
-     */
-    async logClassificationOverride(details) {
-        await this.logEvent('classification_override', {
-            classification_level: details.level,
-            classification_text: details.text,
-            subject: '[REDACTED]', // Don't log actual subject for classified content
-            override_timestamp: new Date().toISOString(),
-            compliance_note: 'User proceeded despite classification warning'
-        }, 'Warning');
     }
 
     /**
@@ -505,37 +454,38 @@ export class Logger {
      * @param {Object} metrics - Processing metrics
      */
     async logProcessingMetrics(metrics) {
-        const metricsData = {
-            model_service: metrics.modelService,
-            model_name: metrics.modelName,
+        const telemetryData = {
+            processing_time_ms: metrics.processingTime,
             email_length: metrics.emailLength,
-            processing_time: metrics.processingTime,
-            participant_count: metrics.participantCount,
-            success: metrics.success,
-            error_type: metrics.errorType || null
+            response_length: metrics.responseLength,
+            model_used: metrics.model,
+            classification: metrics.classification,
+            tokens_used: metrics.tokensUsed || 0,
+            error_occurred: metrics.errorOccurred || false
         };
 
-        await this.logEvent('email_processed', metricsData);
+        await this.logEvent('processing_metrics', telemetryData);
     }
 
     /**
      * Logs security events
-     * @param {string} eventType - Security event type
-     * @param {Object} details - Event details
+     * @param {string} eventType - Type of security event
+     * @param {Object} details - Security event details
      */
     async logSecurityEvent(eventType, details) {
         const securityData = {
-            security_event: eventType,
-            risk_level: details.riskLevel || 'medium',
+            security_event_type: eventType,
+            classification_level: details.classificationLevel,
             action_taken: details.actionTaken,
-            additional_info: details.info || 'No additional information'
+            user_override: details.userOverride || false,
+            compliance_note: 'User proceeded despite classification warning'
         };
 
         await this.logEvent('security_event', securityData, 'Warning');
     }
 
     /**
-     * Gets a session identifier
+     * Gets session ID for tracking
      * @returns {string} Session ID
      */
     getSessionId() {
@@ -544,83 +494,4 @@ export class Logger {
         }
         return this.sessionId;
     }
-
-    /**
-     * Gets user identifier
-     * @param {string} contextEmail - Optional email context to use instead of current user
-     * @returns {string} User ID
-     */
-    getUserId(contextEmail = null) {
-        try {
-            // Use provided context email first (e.g., current email recipient)
-            if (contextEmail) {
-                return contextEmail;
-            }
-            
-            // Use Office context if available
-            if (typeof Office !== 'undefined' && Office.context?.mailbox?.userProfile?.emailAddress) {
-                const email = Office.context.mailbox.userProfile.emailAddress;
-                return email;
-            }
-        } catch (error) {
-            console.warn('Could not get user ID from Office context');
-        }
-        
-        return 'user_unknown';
-    }
-
-    /**
-     * Simple hash function for user ID anonymization
-     * @param {string} str - String to hash
-     * @returns {string} Hash value
-     */
-    simpleHash(str) {
-        let hash = 0;
-        for (let i = 0; i < str.length; i++) {
-            const char = str.charCodeAt(i);
-            hash = ((hash << 5) - hash) + char;
-            hash = hash & hash; // Convert to 32-bit integer
-        }
-        return Math.abs(hash).toString(36);
-    }
-
-    /**
-     * Enables or disables logging
-     * @param {boolean} enabled - Whether logging should be enabled
-     */
-    setLoggingEnabled(enabled) {
-        this.isEnabled = enabled;
-        
-        if (!enabled) {
-            this.logQueue = []; // Clear queue when disabling
-        }
-    }
-
-    /**
-     * Gets current logging status
-     * @returns {Object} Logging status information
-     */
-    getStatus() {
-        return {
-            enabled: this.isEnabled,
-            queueSize: this.logQueue.length,
-            eventSource: this.eventSource,
-            sessionId: this.getSessionId()
-        };
-    }
-
-    /**
-     * Forces immediate flush of telemetry queue
-     */
-    async forceFlush() {
-        if (this.splunkQueue.length > 0) {
-            const provider = this.telemetryConfig?.telemetry?.provider;
-            if (provider === 'api_gateway') {
-                await this.flushApiGatewayQueue();
-            } else if (provider === 'splunk_hec') {
-                await this.flushSplunkQueue();
-            }
-        }
-    }
 }
-

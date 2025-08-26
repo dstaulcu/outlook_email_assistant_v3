@@ -68,7 +68,6 @@ export class ClassificationDetector {
     /**
      * Parses structured classification block from internal system
      * Expected format:
-     * ====================================
      * CLASSIFICATION_BLOCK
      * ...
      * ...
@@ -78,47 +77,42 @@ export class ClassificationDetector {
      */
     parseClassificationBlock(emailBody) {
         // Look for the classification block structure in first few lines
-        const lines = emailBody.split('\n').slice(0, 6); // Check more lines to handle empty lines
-        
+        const lines = emailBody.split('\n').slice(0, 8); // Check more lines to handle empty lines
+
+        // Find first non-empty line (classification), then next non-empty line (should be =====)
         let classificationLine = null;
-        let blockFound = false;
         let classificationLineNumber = -1;
-        
-        // Check if first line looks like a separator (equals signs)
-        if (lines.length >= 2) {
-            const firstLine = lines[0].trim();
-            if (firstLine.match(/^={10,}$/)) {
-                // Look for classification in the next few lines (skip empty lines)
-                for (let i = 1; i < Math.min(lines.length, 5); i++) {
-                    const potentialClassification = lines[i].trim().toUpperCase();
-                    
-                    // Skip empty lines
-                    if (!potentialClassification) {
-                        continue;
-                    }
-                    
-                    if (this.classifications[potentialClassification]) {
-                        classificationLine = potentialClassification;
-                        blockFound = true;
-                        classificationLineNumber = i + 1; // Convert to 1-based line number
+        let separatorFound = false;
+        let i = 0;
+        // Find first non-empty line
+        while (i < lines.length && !classificationLine) {
+            const line = lines[i].trim();
+            if (line) {
+                const upper = line.toUpperCase();
+                // Accept exact or substring match for known classifications
+                for (const classLevel of Object.keys(this.classifications)) {
+                    if (upper === classLevel || upper.includes(classLevel)) {
+                        classificationLine = classLevel;
+                        classificationLineNumber = i + 1;
                         break;
-                    } else {
-                        // Also check if classification is part of a longer line
-                        for (const classLevel of Object.keys(this.classifications)) {
-                            if (potentialClassification.includes(classLevel)) {
-                                classificationLine = classLevel;
-                                blockFound = true;
-                                classificationLineNumber = i + 1; // Convert to 1-based line number
-                                break;
-                            }
-                        }
-                        if (blockFound) break;
                     }
                 }
             }
+            i++;
+        }
+        // Find next non-empty line (should be separator)
+        while (i < lines.length && !separatorFound) {
+            const line = lines[i].trim();
+            if (line) {
+                if (/^={5,}$/.test(line)) {
+                    separatorFound = true;
+                }
+                break;
+            }
+            i++;
         }
 
-        if (!blockFound || !classificationLine) {
+        if (!classificationLine || !separatorFound) {
             return { detected: false };
         }
 
@@ -136,7 +130,7 @@ export class ClassificationDetector {
                 text: `Classification Block: ${classification}`,
                 classification: classification,
                 restricted: classificationInfo.restricted,
-                line: classificationLineNumber  // Use actual line number where classification was found
+                line: classificationLineNumber
             }],
             source: 'structured_block'
         };

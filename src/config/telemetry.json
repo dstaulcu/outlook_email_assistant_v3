@@ -10,10 +10,6 @@
       "flushInterval": 1000
     }
   },
-  "environment": {
-    "name": "production",
-    "version": "1.0.0"
-  },
   "metadata": {
     "application": "Outlook Email Assistant",
     "component": "TaskPane",

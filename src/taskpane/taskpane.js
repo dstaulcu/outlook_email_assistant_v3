@@ -146,8 +146,6 @@ class TaskpaneApp {
             
             // Log session start
             this.logger.logEvent('session_start', {
-                timestamp: new Date().toISOString(),
-                version: '1.0.0',
                 host: Office.context.host
             });
             
@@ -161,6 +159,8 @@ class TaskpaneApp {
         return new Promise((resolve, reject) => {
             Office.onReady((info) => {
                 if (info.host === Office.HostType.Outlook) {
+                    // Cache user context immediately when Office is ready
+                    this.logger.cacheUserContext();
                     resolve();
                 } else {
                     reject(new Error('This add-in is designed for Outlook only'));
@@ -289,7 +289,11 @@ class TaskpaneApp {
         ['api-key', 'endpoint-url'].forEach(id => {
             const element = document.getElementById(id);
             if (element) {
-                element.addEventListener('blur', () => this.saveCurrentProviderSettings(this.modelServiceSelect?.value));
+                element.addEventListener('blur', () => {
+                    this.saveCurrentProviderSettings(this.modelServiceSelect?.value);
+                    // Also trigger model lookup when endpoint or key changes
+                    this.updateModelDropdown();
+                });
             }
         });
     }
@@ -2035,8 +2039,8 @@ class TaskpaneApp {
     }
 
     getUserId() {
-        // In a real implementation, this would get the actual user ID
-        return Office.context.mailbox.userProfile.emailAddress || 'unknown';
+        // Use the logger's consistent user context
+        return this.logger?.getUserContext()?.userId || 'unknown';
     }
 
     /**
@@ -2072,7 +2076,6 @@ class TaskpaneApp {
             
             // Content-safe metadata
             subjectHash: subjectHash,
-            normalizedSubject: this.currentEmail.normalizedSubject || null,
             bodyLength: this.currentEmail.bodyLength || 0,
             hasAttachments: this.currentEmail.hasAttachments || false,
             hasInternetMessageId: this.currentEmail.hasInternetMessageId || false,

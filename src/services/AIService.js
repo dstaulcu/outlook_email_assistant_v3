@@ -542,12 +542,13 @@ Provide only the email body text that should be sent.`;
     buildEndpoint(service, config) {
         // Priority order: user endpointUrl > provider baseUrl > hardcoded fallback
         let baseUrl = '';
-        
+
         // 1. Check if user provided a custom endpointUrl
         if (config.endpointUrl && config.endpointUrl.trim()) {
+            // If user provides a custom endpoint, use as-is
             return config.endpointUrl.trim();
         }
-        
+
         // 2. Check provider configuration from ai-providers.json
         const providerConfig = this.providersConfig[service];
         if (providerConfig && providerConfig.baseUrl) {
@@ -556,23 +557,31 @@ Provide only the email body text that should be sent.`;
             // 3. Fallback to configured fallback URL
             baseUrl = this.providersConfig?._config?.fallbackBaseUrl || 'http://localhost:11434/v1';
         }
-        
-        // Build service-specific endpoint path        
+
+        // Helper: always ensure /chat/completions is appended for OpenAI-compatible
+        function ensureOpenAICompletions(url) {
+            // Remove trailing /v1 or /v1/ if present
+            url = url.replace(/\/(v1|v1\/)$/, '');
+            // Remove trailing slash
+            url = url.replace(/\/$/, '');
+            return `${url}/chat/completions`;
+        }
+
+        // Build service-specific endpoint path
         switch (service) {
             case 'openai':
-                return `${baseUrl}/chat/completions`;
+                return ensureOpenAICompletions(baseUrl);
             case 'ollama':
                 return `${baseUrl}/api/chat`;
             case 'azure':
                 return baseUrl; // Azure endpoints are usually complete
             default:
-                // For custom providers, assume OpenAI-compatible API
-                // Check if provider config specifies a different API format
+                // For custom providers, assume OpenAI-compatible API unless apiFormat is 'ollama'
                 if (providerConfig && providerConfig.apiFormat === 'ollama') {
                     return `${baseUrl}/api/chat`;
                 } else {
-                    // Default to OpenAI-compatible format for onsite1, onsite2, etc.
-                    return `${baseUrl}/chat/completions`;
+                    // Always ensure /chat/completions for OpenAI-compatible (onsite1, onsite2, etc.)
+                    return ensureOpenAICompletions(baseUrl);
                 }
         }
     }

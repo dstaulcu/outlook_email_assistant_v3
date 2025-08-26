@@ -29,7 +29,7 @@ try {
     Write-Host "Response: $($_.Exception.Response)" -ForegroundColor Red
 }
 
-Write-Host "`n" -NoNewline
+Write-Host ""
 
 # Test 2: Email analysis simulation
 $testData2 = @{
@@ -60,7 +60,7 @@ try {
     Write-Host $_.Exception.Message -ForegroundColor Red
 }
 
-Write-Host "`n" -NoNewline
+Write-Host ""
 
 # Test 3: CORS preflight test
 Write-Host "Test 3: CORS preflight (OPTIONS request)" -ForegroundColor Yellow
@@ -78,5 +78,6 @@ try {
     Write-Host $_.Exception.Message -ForegroundColor Red
 }
 
-Write-Host "`nTesting completed!" -ForegroundColor Green
+Write-Host ""
+Write-Host "Testing completed!" -ForegroundColor Green
 Write-Host "If all tests passed, your API Gateway is working correctly." -ForegroundColor Yellow

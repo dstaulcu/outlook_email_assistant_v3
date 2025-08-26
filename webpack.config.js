@@ -1,6 +1,8 @@
 const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const CopyWebpackPlugin = require('copy-webpack-plugin');
+const webpack = require('webpack');
+const packageJson = require('./package.json');
 
 module.exports = {
   entry: {
@@ -28,6 +30,9 @@ module.exports = {
     ]
   },
   plugins: [
+    new webpack.DefinePlugin({
+      'process.env.PACKAGE_VERSION': JSON.stringify(packageJson.version)
+    }),
     new HtmlWebpackPlugin({
       template: './src/taskpane/taskpane.html',
       filename: 'taskpane.html',

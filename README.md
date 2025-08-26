@@ -89,6 +89,247 @@ npm run build
 - **API Key Security**: Secure storage using Office.js roaming settings with localStorage fallback
 - **Content Sanitization**: Automatic removal of sensitive data from all logging and telemetry
 
+## Telemetry & Monitoring
+
+The application provides comprehensive telemetry for operational monitoring, security compliance, and user experience analytics. All telemetry is transmitted through a secure AWS API Gateway pipeline with exponential backoff retry logic.
+
+### Telemetry Pipeline Architecture
+- **Collection**: Client-side JavaScript Logger service with intelligent batching
+- **Transport**: HTTPS POST to AWS API Gateway with CORS support
+- **Processing**: AWS Lambda functions for data validation and enrichment  
+- **Storage**: Splunk Enterprise on EC2 for analysis and dashboards
+- **Retry Logic**: Exponential backoff (1s, 2s, 4s, 8s) for transient failures
+- **Error Handling**: Permanent error detection with graceful event dropping
+
+### Event Data Dictionary
+
+#### Core Event Structure
+All telemetry events share a common base structure:
+
+| Field | Type | Description | Example |
+|-------|------|-------------|---------|
+| `eventType` | string | Event category identifier | `"session_start"` |
+| `timestamp` | string | ISO 8601 timestamp with milliseconds | `"2025-08-26T02:03:47.401Z"` |
+| `source` | string | Application identifier | `"PromptEmail"` |
+| `version` | string | Application version from package.json | `"1.0.0"` |
+| `sessionId` | string | Unique session identifier | `"sess_1756173824497_limudw6qt"` |
+| `userContext` | object | User identification context | `{"email": "user@domain.com"}` |
+
+#### Session Events
+
+**`session_start`**
+Triggered when the Outlook add-in initializes.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `host` | string | Office application host | `"Outlook"` |
+
+**`session_summary`**
+Sent on session end with aggregated metrics.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `session_duration_ms` | integer | Total session duration in milliseconds |
+| `email_analyzed` | boolean | Whether any emails were processed |
+| `response_generated` | boolean | Whether AI responses were generated |
+| `clipboard_used` | boolean | Whether suggestions were copied |
+| `refinement_count` | integer | Number of response refinements |
+
+#### Email Processing Events
+
+**`email_analyzed`**
+Captured for each email analysis operation.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `model_service` | string | AI provider used | `"ollama"` |
+| `model_name` | string | Specific model identifier | `"llama3:latest"` |
+| `email_length` | integer | Character count of email content |
+| `recipients_count` | integer | Number of email recipients |
+| `classification` | string | Detected security classification | `"SECRET"` |
+| `classification_detected` | boolean | Whether classification was found |
+| `has_markings` | boolean | Whether classification markings present |
+| `analysis_success` | boolean | Whether analysis completed successfully |
+| `refinement_count` | integer | Number of refinements performed |
+| `clipboard_used` | boolean | Whether response was copied |
+| `performance_metrics` | object | Timing and performance data |
+
+**`response_copied`**
+Logged when user copies AI-generated response to clipboard.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `refinement_count` | integer | Number of refinements before copy |
+| `response_length` | integer | Character count of copied response |
+
+#### Security Classification Events
+
+**`classification_incompatible`**
+Triggered when email classification is incompatible with selected AI provider.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `conversationId` | string | Outlook conversation identifier |
+| `itemId` | string | Outlook item identifier |
+| `itemClass` | string | Outlook item class | `"IPM.Note"` |
+| `subjectHash` | string | Hashed email subject for correlation |
+| `bodyLength` | integer | Email body character count |
+| `hasAttachments` | boolean | Whether email has file attachments |
+| `hasInternetMessageId` | boolean | Whether email has internet message ID |
+| `itemType` | string | Type of Outlook item | `"message"` |
+| `isReply` | boolean | Whether this is a reply email |
+| `date` | string | Email timestamp |
+| `provider` | string | AI provider being used |
+| `classification` | string | Detected classification level |
+| `provider_supported_classifications` | array | Classifications this provider supports |
+
+**`classification_warning_overridden`**
+Logged when user chooses to proceed despite classification warnings.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `conversationId` | string | Outlook conversation identifier |
+| `itemId` | string | Outlook item identifier |
+| `itemClass` | string | Outlook item class |
+| `subjectHash` | string | Hashed email subject |
+| `bodyLength` | integer | Email body character count |
+| `hasAttachments` | boolean | Whether email has attachments |
+| `hasInternetMessageId` | boolean | Whether email has message ID |
+| `itemType` | string | Outlook item type |
+| `isReply` | boolean | Whether this is a reply |
+| `date` | string | Email timestamp |
+| `classification_detected` | string | Detected classification level |
+| `classification_restricted` | boolean | Whether classification is restricted |
+| `classification_markings_count` | integer | Number of classification markings found |
+| `provider_used` | string | AI provider selected |
+| `provider_supported_classifications` | array | Supported classifications |
+| `warning_type` | string | Type of warning displayed | `"user_override"` |
+
+#### Performance Events
+
+**`model_refresh`**
+Triggered when AI models are refreshed from providers.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `provider` | string | AI provider being refreshed |
+| `models_discovered` | integer | Number of available models |
+| `refresh_duration_ms` | integer | Time taken to discover models |
+| `success` | boolean | Whether refresh succeeded |
+| `trigger` | string | What triggered the refresh |
+
+**`error_event`**
+Captures application errors for debugging and reliability metrics.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `error_type` | string | Category of error |
+| `error_message` | string | Sanitized error description |
+| `stack_trace` | string | Truncated stack trace (first 200 chars) |
+| `recovery_attempted` | boolean | Whether automatic recovery was tried |
+| `user_impact` | string | Severity of user experience impact |
+
+#### Real-Time Event Examples
+
+Based on live telemetry data, here are actual event examples:
+
+```json
+{
+  "eventType": "session_start",
+  "timestamp": "2025-08-26T02:19:07.067Z",
+  "source": "PromptEmail",
+  "version": "1.0.0",
+  "sessionId": "sess_1756174747068_pvgpfsa04",
+  "userContext": {"email": "user@domain.com"},
+  "host": "Outlook"
+}
+```
+
+```json
+{
+  "eventType": "classification_warning_overridden",
+  "timestamp": "2025-08-26T02:19:13.110Z",
+  "source": "PromptEmail",
+  "sessionId": "sess_1756174747068_pvgpfsa04",
+  "userContext": {"email": "user@domain.com"},
+  "classification_detected": "SECRET",
+  "provider_used": "ollama",
+  "provider_supported_classifications": ["UNCLASSIFIED"],
+  "warning_type": "user_override"
+}
+```
+
+```json
+{
+  "eventType": "email_analyzed",
+  "timestamp": "2025-08-26T02:19:33.491Z",
+  "sessionId": "sess_1756174747068_pvgpfsa04",
+  "userContext": {"email": "user@domain.com"},
+  "model_service": "ollama",
+  "model_name": "llama3:latest",
+  "email_length": 45,
+  "recipients_count": 1,
+  "classification": "SECRET",
+  "classification_detected": true,
+  "has_markings": true,
+  "analysis_success": true
+}
+```
+
+```json
+{
+  "eventType": "session_summary",
+  "timestamp": "2025-08-26T02:19:52.231Z",
+  "sessionId": "sess_1756174747068_pvgpfsa04",
+  "userContext": {"email": "user@domain.com"},
+  "session_duration_ms": 45217,
+  "refinement_count": 0,
+  "clipboard_used": true,
+  "email_analyzed": true,
+  "response_generated": true
+}
+```
+#### User Interaction Events
+
+**`feature_usage`**
+Tracks which features are being utilized.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `feature_name` | string | Feature identifier |
+| `interaction_type` | string | Type of user interaction |
+| `duration_ms` | integer | Time spent in feature |
+| `completion_status` | string | Whether feature use completed |
+
+### Data Privacy & Security
+
+#### Sanitization Rules
+- **Email Content**: Never logged or transmitted (content is classified as "SECRET" etc.)
+- **Email Subjects**: Never logged in plain text - only hashed subjectHash for correlation
+- **API Keys**: Completely filtered from all telemetry  
+- **Personal Information**: Email addresses are the only user identifier (required for user journey tracking)
+- **Classification Content**: Only classification level logged, never the actual classified content
+- **Error Messages**: Sensitive paths and credentials stripped from stack traces
+- **Email Metadata**: Outlook IDs are hashed or used only for session correlation
+
+#### User Context Policy
+- **Consistent Identification**: All events include userContext.email for user journey tracking
+- **Session Correlation**: sessionId links all events in a user workflow
+- **Privacy Balance**: Minimal user data while enabling operational analytics
+- **Compliance**: User identification supports audit requirements for classified content handling
+
+#### Retention Policy
+- **Real-time Data**: 90 days for operational monitoring
+- **Aggregated Metrics**: 2 years for trend analysis
+- **Security Events**: 7 years for compliance audit trail
+- **Error Logs**: 1 year for debugging and reliability improvement
+
+#### Compliance Features
+- **GDPR**: Anonymized user contexts and data minimization
+- **SOC 2**: Secure transmission and access controls
+- **Security Classifications**: Proper handling of government classification markings
+- **Audit Trail**: Complete event lineage for security reviews
+
 ## Directory Structure
 
 ```

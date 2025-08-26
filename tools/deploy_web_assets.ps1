@@ -1,9 +1,46 @@
+<#
+.SYNOPSIS
+    Builds and deploys the PromptEmail Outlook Add-in to AWS S3
+
+.DESCRIPTION
+    This script builds the add-in using webpack, optionally increments the version,
+    and deploys the assets to AWS S3 with environment-specific URL rewriting.
+
+.PARAMETER Environment
+    Deployment environment: 'Dev' or 'Prd'
+
+.PARAMETER DryRun
+    Show what would be deployed without actually deploying
+
+.PARAMETER Force  
+    Force deployment without confirmation prompts
+
+.PARAMETER IncrementVersion
+    Automatically increment the package.json version before building.
+    Valid values: 'major', 'minor', 'patch'
+
+.EXAMPLE
+    # Deploy to production with patch version increment
+    .\deploy_web_assets.ps1 -Environment Prd -IncrementVersion patch
+
+.EXAMPLE
+    # Deploy to development without version change
+    .\deploy_web_assets.ps1 -Environment Dev
+
+.EXAMPLE
+    # Dry run for production with minor version bump
+    .\deploy_web_assets.ps1 -Environment Prd -IncrementVersion minor -DryRun
+#>
+
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('Dev', 'Prd')]
     [string]$Environment,
     [switch]$DryRun,
-    [switch]$Force
+    [switch]$Force,
+    [Parameter(Mandatory = $false)]
+    [ValidateSet('major', 'minor', 'patch')]
+    [string]$IncrementVersion
 )
 
 function Update-EmbeddedUrls {
@@ -276,6 +313,63 @@ function Write-Status {
     Write-Host $Message -ForegroundColor $Color
 }
 
+function Update-PackageVersion {
+    param([string]$IncrementType)
+    
+    Write-Status "Incrementing package version ($IncrementType)..." 'Blue'
+    
+    $packageJsonPath = Join-Path $PSScriptRoot "..\package.json"
+    if (-not (Test-Path $packageJsonPath)) {
+        Write-Status "ERROR: package.json not found at $packageJsonPath" 'Red'
+        return $false
+    }
+    
+    try {
+        # Read and parse package.json
+        $packageContent = Get-Content $packageJsonPath -Raw | ConvertFrom-Json
+        $currentVersion = $packageContent.version
+        
+        Write-Status "Current version: $currentVersion" 'Yellow'
+        
+        # Parse version (major.minor.patch)
+        if ($currentVersion -match '^(\d+)\.(\d+)\.(\d+)$') {
+            $major = [int]$matches[1]
+            $minor = [int]$matches[2] 
+            $patch = [int]$matches[3]
+            
+            # Increment based on type
+            switch ($IncrementType) {
+                'major' { 
+                    $major++; $minor = 0; $patch = 0 
+                }
+                'minor' { 
+                    $minor++; $patch = 0 
+                }
+                'patch' { 
+                    $patch++ 
+                }
+            }
+            
+            $newVersion = "$major.$minor.$patch"
+            $packageContent.version = $newVersion
+            
+            # Write back to file with proper formatting
+            $packageContent | ConvertTo-Json -Depth 10 | Set-Content $packageJsonPath -Encoding UTF8
+            
+            Write-Status "Version updated: $currentVersion → $newVersion" 'Green'
+            return $true
+        }
+        else {
+            Write-Status "ERROR: Invalid version format in package.json: $currentVersion" 'Red'
+            return $false
+        }
+    }
+    catch {
+        Write-Status "ERROR: Failed to update package version: $($_.Exception.Message)" 'Red'
+        return $false
+    }
+}
+
 function Test-Prerequisites {
     Write-Status "Checking prerequisites..." 'Blue'
     
@@ -504,6 +598,15 @@ else {
 
 # Run prerequisites check as early as possible
 Test-Prerequisites
+
+# Increment version if requested
+if ($IncrementVersion) {
+    $versionUpdateSuccess = Update-PackageVersion -IncrementType $IncrementVersion
+    if (-not $versionUpdateSuccess) {
+        Write-Status "ERROR: Failed to update package version. Deployment aborted." 'Red'
+        exit 1
+    }
+}
 
 # clear the public folder if it already exists
 if (test-path -path $publicDir) {
