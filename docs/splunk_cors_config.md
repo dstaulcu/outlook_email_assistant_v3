@@ -22,7 +22,7 @@ Add to `inputs.conf` under the `[http]` stanza:
 [http]
 crossOriginSharingPolicy = *
 # OR for more security, specify the Office add-in domain:
-# crossOriginSharingPolicy = https://293354421824-outlook-email-assistant-prd.s3.us-east-1.amazonaws.com
+# crossOriginSharingPolicy = https://293354421824-outlook-email-assistant-prod.s3.us-east-1.amazonaws.com
 ```
 
 ### For Splunk 6.3 (General REST API CORS)

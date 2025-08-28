@@ -157,13 +157,31 @@ export class AIService {
             }
             
             const response = await fetch(url, { headers });
-            if (!response.ok) throw new Error(`Failed to fetch models: ${response.status}`);
+            
+            if (!response.ok) {
+                let errorMessage = `Failed to fetch models: ${response.status}`;
+                
+                // Provide specific error messages for common authentication issues
+                if (response.status === 401) {
+                    errorMessage = 'Authentication failed: Invalid or missing API key. Please check your API key in settings.';
+                } else if (response.status === 403) {
+                    errorMessage = 'Access forbidden: Your API key may not have permission to access models. Please verify your key has the correct permissions.';
+                } else if (response.status === 404) {
+                    errorMessage = 'Endpoint not found: The models endpoint may not be available. Please verify your endpoint URL is correct.';
+                } else if (response.status >= 500) {
+                    errorMessage = 'Server error: The API server is experiencing issues. Please try again later.';
+                }
+                
+                throw new Error(errorMessage);
+            }
+            
             const data = await response.json();
             // OpenAI-compatible APIs return { data: [{ id: ... }, ...] }
             return (data.data || []).map(m => m.id);
         } catch (err) {
             console.error('Error fetching OpenAI-compatible models:', err);
-            return [];
+            // Re-throw with original error message if it's already detailed
+            throw err;
         }
     }
     
@@ -650,7 +668,40 @@ Provide only the email body text that should be sent.`;
             const errorText = await response.text();
             console.error(`[AIService] API request failed: ${response.status} ${response.statusText}`);
             console.error('Error response:', errorText);
-            throw new Error(`API request failed: ${response.status} ${response.statusText} - ${errorText}`);
+            
+            let userFriendlyMessage = '';
+            
+            // Provide specific error messages for common authentication and configuration issues
+            if (response.status === 401) {
+                userFriendlyMessage = 'Authentication failed: Your API key is invalid or missing. Please check your API key in the settings panel and ensure it\'s correct.';
+            } else if (response.status === 403) {
+                userFriendlyMessage = 'Access forbidden: Your API key may not have permission to access this service. Please verify your key has the correct permissions or contact your administrator.';
+            } else if (response.status === 404) {
+                userFriendlyMessage = 'Service not found: The API endpoint may be incorrect. Please verify your endpoint URL in the settings panel.';
+            } else if (response.status === 429) {
+                userFriendlyMessage = 'Rate limit exceeded: Too many requests. Please wait a moment and try again.';
+            } else if (response.status >= 500) {
+                userFriendlyMessage = 'Server error: The AI service is experiencing issues. Please try again later.';
+            } else {
+                userFriendlyMessage = `API request failed: ${response.status} ${response.statusText}`;
+            }
+            
+            // Include error details if available
+            if (errorText && errorText.trim()) {
+                try {
+                    const errorData = JSON.parse(errorText);
+                    if (errorData.error && errorData.error.message) {
+                        userFriendlyMessage += ` (${errorData.error.message})`;
+                    }
+                } catch (e) {
+                    // If error text isn't JSON, include raw text if it's not too long
+                    if (errorText.length < 200) {
+                        userFriendlyMessage += ` (${errorText})`;
+                    }
+                }
+            }
+            
+            throw new Error(userFriendlyMessage);
         }
 
         console.debug('Response OK, parsing JSON...');
@@ -674,25 +725,22 @@ Provide only the email body text that should be sent.`;
 
         // 1. Check if user provided a custom endpointUrl
         if (config.endpointUrl && config.endpointUrl.trim()) {
-            // If user provides a custom endpoint, use as-is
-            return config.endpointUrl.trim();
+            baseUrl = config.endpointUrl.trim().replace(/\/$/, '');
         }
-
         // 2. Check provider configuration from ai-providers.json
-        const providerConfig = this.providersConfig[service];
-        if (providerConfig && providerConfig.baseUrl) {
-            baseUrl = providerConfig.baseUrl.replace(/\/$/, '');
+        else if (this.providersConfig[service] && this.providersConfig[service].baseUrl) {
+            baseUrl = this.providersConfig[service].baseUrl.replace(/\/$/, '');
         } else {
             // 3. Fallback to configured fallback URL
             baseUrl = this.providersConfig?._config?.fallbackBaseUrl || 'http://localhost:11434/v1';
         }
 
-        // Helper: always ensure /chat/completions is appended for OpenAI-compatible
+        // Helper: ensure proper OpenAI-compatible endpoint structure
         function ensureOpenAICompletions(url) {
-            // Remove trailing /v1 or /v1/ if present
-            url = url.replace(/\/(v1|v1\/)$/, '');
             // Remove trailing slash
             url = url.replace(/\/$/, '');
+            
+            // Simply append /chat/completions - preserve whatever base URL structure the user configured
             return `${url}/chat/completions`;
         }
 
@@ -705,7 +753,8 @@ Provide only the email body text that should be sent.`;
             case 'azure':
                 return baseUrl; // Azure endpoints are usually complete
             default:
-                // For custom providers, assume OpenAI-compatible API unless apiFormat is 'ollama'
+                // For custom providers (onsite1, onsite2, etc.), assume OpenAI-compatible API unless apiFormat is 'ollama'
+                const providerConfig = this.providersConfig[service];
                 if (providerConfig && providerConfig.apiFormat === 'ollama') {
                     return `${baseUrl}/api/chat`;
                 } else {

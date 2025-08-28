@@ -20,10 +20,10 @@
     --bg-panel: #fafbfc;
     --bg-overlay: rgba(0, 0, 0, 0.5);
     
-    /* Text colors */
+    /* Text colors - Updated for WCAG AA compliance */
     --text-primary: #323130;
-    --text-secondary: #605e5c;
-    --text-muted: #8a8886;
+    --text-secondary: #484644;  /* Darker for better contrast (was #605e5c) */
+    --text-muted: #6e6b69;      /* Much darker for better contrast (was #8a8886) */
     --text-inverse: #ffffff;
     
     /* Borders */
@@ -477,6 +477,7 @@ section h3 {
 .slider {
     flex: 1;
     -webkit-appearance: none;
+    appearance: none;  /* Added standard property for compatibility */
     height: 6px;
     border-radius: 3px;
     background: var(--bg-tertiary);

@@ -18,26 +18,9 @@
     "helpText": "Install Ollama locally - no API key needed",
     "knownModels": [
       "llama3:latest",
-      "llama3:8b",
-      "llama3:13b",
-      "llama3:70b",
-      "llama2:latest",
-      "llama2:7b",
-      "llama2:13b",
-      "llama2:70b",
-      "codellama:latest",
-      "codellama:7b",
-      "codellama:13b",
-      "mistral:latest",
-      "mixtral:latest",
-      "phi3:latest",
       "gemma:latest",
       "qwen2:latest"
-    ],
-    "supportedClassifications": [
-      "UNCLASSIFIED"
-    ],
-    "classificationNote": "Local processing - suitable for CONFIDENTIAL and below"
+    ]
   },
   "onsite1": {
     "label": "onsite1",
@@ -48,19 +31,9 @@
     "helpText": "Contact your system administrator for API key and configuration details",
     "knownModels": [
       "gpt-4",
-      "gpt-4o",
-      "gpt-4o-mini",
-      "gpt-4-turbo",
-      "gpt-3.5-turbo",
-      "custom-model-1",
-      "custom-model-2"
+      "custom-model-1"
     ],
-    "maxTokens": 4000,
-    "supportedClassifications": [
-      "UNCLASSIFIED",
-      "CONFIDENTIAL"
-    ],
-    "classificationNote": "Cloud service - UNCLASSIFIED content only"
+    "maxTokens": 4000
   },
   "onsite2": {
     "label": "onsite2",
@@ -71,18 +44,9 @@
     "helpText": "Contact your system administrator for API key and configuration details",
     "knownModels": [
       "gpt-4",
-      "gpt-4o",
-      "gpt-4-turbo",
-      "gpt-3.5-turbo",
       "enterprise-model-1",
       "enterprise-model-2"
     ],
-    "maxTokens": 4000,
-    "supportedClassifications": [
-      "UNCLASSIFIED",
-      "CONFIDENTIAL",
-      "SECRET"
-    ],
-    "classificationNote": "Cloud service - UNCLASSIFIED content only"
+    "maxTokens": 4000
   }
 }

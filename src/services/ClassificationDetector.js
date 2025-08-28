@@ -16,23 +16,19 @@ export class ClassificationDetector {
             'CTS': { color: 'red', restricted: true }
         };
 
-        // Common classification patterns
+        // Common classification patterns - flexible to handle real-world formatting
         this.patterns = [
-            // Internal system classification block (primary pattern)
-            // Matches: CLASSIFICATION_BLOCK at start of email
-            /^(UNCLASSIFIED|CONFIDENTIAL|SECRET|TOP SECRET|TS|COSMIC TOP SECRET|CTS)\s*$/gim,
+            // Classification at start of line with optional leading whitespace and trailing content
+            /^\s*(UNCLASSIFIED|CONFIDENTIAL|(?:TOP\s+)?SECRET|TS|COSMIC\s+TOP\s+SECRET|CTS)(?:\s|$|[:\-])/gim,
             
-            // Standard classification markings (fallback)
-            /^(UNCLASSIFIED|CONFIDENTIAL|SECRET|TOP SECRET|TS|COSMIC TOP SECRET|CTS)\s*$/gim,
+            // Classification banners with various formats
+            /^\s*(CLASSIFICATION:|CLASS:)\s*(UNCLASSIFIED|CONFIDENTIAL|(?:TOP\s+)?SECRET|TS|COSMIC\s+TOP\s+SECRET|CTS)/gim,
             
-            // Classification with additional markings
-            /^(UNCLASSIFIED|CONFIDENTIAL|SECRET|TOP SECRET|TS)\/\/([A-Z\s\/]+)\s*$/gim,
+            // Classification with additional markings (e.g., "SECRET//NOFORN")
+            /^\s*(UNCLASSIFIED|CONFIDENTIAL|(?:TOP\s+)?SECRET|TS)\/\/([A-Z\s\/]+)/gim,
             
-            // Classification banners
-            /^\s*(CLASSIFICATION:|CLASS:)\s*(UNCLASSIFIED|CONFIDENTIAL|SECRET|TOP SECRET|TS|COSMIC TOP SECRET|CTS)\s*$/gim,
-            
-            // Portion markings within content
-            /\(([UCS]|CONFIDENTIAL|SECRET|TOP SECRET|TS)\)/gim
+            // Portion markings within content (only in parentheses)
+            /\(([UCS]|CONFIDENTIAL|(?:TOP\s+)?SECRET|TS)\)/gim
         ];
 
         // Lines to check - classification should be in first 2 lines for structured blocks
@@ -55,69 +51,91 @@ export class ClassificationDetector {
             };
         }
 
+        // Debug: Log first few lines of email to understand what's being classified
+        const firstLines = emailBody.split('\n').slice(0, 5).join('\n');
+        // Only log if we detect something to avoid spam
+        
         // First, try to parse the structured classification block
         const structuredResult = this.parseClassificationBlock(emailBody);
         if (structuredResult.detected) {
+            console.debug('[ClassificationDetector] Classification found:', structuredResult.text);
             return structuredResult;
         }
 
         // Fallback to pattern-based detection
-        return this.detectClassificationByPatterns(emailBody);
+        const patternResult = this.detectClassificationByPatterns(emailBody);
+        if (patternResult.detected) {
+            console.debug('[ClassificationDetector] Pattern detection found:', patternResult.text);
+        }
+        return patternResult;
     }
 
     /**
      * Parses structured classification block from internal system
-     * Expected format:
-     * CLASSIFICATION_BLOCK
-     * ...
-     * ...
-     * ====================================
+     * Classification should ONLY appear on the first readable line of the email
      * @param {string} emailBody - The email body text
      * @returns {Object} Classification detection result
      */
     parseClassificationBlock(emailBody) {
-        // Look for the classification block structure in first few lines
-        const lines = emailBody.split('\n').slice(0, 8); // Check more lines to handle empty lines
-
-        // Find first non-empty line (classification), then next non-empty line (should be =====)
-        let classificationLine = null;
-        let classificationLineNumber = -1;
-        let separatorFound = false;
-        let i = 0;
-        // Find first non-empty line
-        while (i < lines.length && !classificationLine) {
+        // Look for classification ONLY in the first readable line
+        const lines = emailBody.split('\n');
+        
+        // Find the first non-empty, non-whitespace line
+        let firstReadableLine = null;
+        let lineNumber = -1;
+        
+        for (let i = 0; i < lines.length && i < 5; i++) { // Don't look beyond first 5 lines
             const line = lines[i].trim();
             if (line) {
-                const upper = line.toUpperCase();
-                // Accept exact or substring match for known classifications
-                for (const classLevel of Object.keys(this.classifications)) {
-                    if (upper === classLevel || upper.includes(classLevel)) {
-                        classificationLine = classLevel;
-                        classificationLineNumber = i + 1;
-                        break;
-                    }
-                }
-            }
-            i++;
-        }
-        // Find next non-empty line (should be separator)
-        while (i < lines.length && !separatorFound) {
-            const line = lines[i].trim();
-            if (line) {
-                if (/^={5,}$/.test(line)) {
-                    separatorFound = true;
-                }
+                firstReadableLine = line;
+                lineNumber = i + 1;
                 break;
             }
-            i++;
         }
 
-        if (!classificationLine || !separatorFound) {
+        if (!firstReadableLine) {
             return { detected: false };
         }
 
-        const classification = this.normalizeClassification(classificationLine);
+        // Only log in debug mode to reduce noise
+        // console.debug('[ClassificationDetector] First readable line:', firstReadableLine);
+
+        // Check if the first readable line contains a classification level
+        // Allow for leading/trailing whitespace and additional text after classification
+        const upper = firstReadableLine.toUpperCase().trim();
+        let detectedClassification = null;
+        
+        // Check for classification at the beginning of the line (with optional leading whitespace)
+        for (const classLevel of Object.keys(this.classifications)) {
+            // Create a regex that allows leading whitespace and optional text after classification
+            const classPattern = new RegExp(`^\\s*${classLevel.replace(/\s+/g, '\\s+')}(?:\\s|$|[:\\-])`, 'i');
+            if (classPattern.test(upper)) {
+                detectedClassification = classLevel;
+                break;
+            }
+        }
+
+        // Also check for exact match after trimming (most common case)
+        if (!detectedClassification) {
+            for (const classLevel of Object.keys(this.classifications)) {
+                if (upper === classLevel) {
+                    detectedClassification = classLevel;
+                    break;
+                }
+            }
+        }
+
+        if (!detectedClassification) {
+            // Only log in debug scenarios - commented to reduce noise
+            // console.debug('[ClassificationDetector] No classification found in first line');
+            return { detected: false };
+        }
+
+        const classification = this.normalizeClassification(detectedClassification);
         const classificationInfo = this.classifications[classification];
+
+        // Reduced logging - only log classification level without full details
+        // console.debug('[ClassificationDetector] Classification detected:', classification, 'from line:', firstReadableLine);
 
         return {
             detected: true,
@@ -125,44 +143,66 @@ export class ClassificationDetector {
             restricted: classificationInfo.restricted,
             warning: classificationInfo.restricted,
             color: classificationInfo.color,
-            details: `Structured classification block detected: ${this.getClassificationMessage(classification)}`,
+            details: `Classification found on first line: ${this.getClassificationMessage(classification)}`,
             markings: [{
-                text: `Classification Block: ${classification}`,
+                text: `First Line Classification: ${classification}`,
                 classification: classification,
                 restricted: classificationInfo.restricted,
-                line: classificationLineNumber
+                line: lineNumber
             }],
-            source: 'structured_block'
+            source: 'first_line'
         };
     }
 
     /**
      * Fallback pattern-based detection for emails without structured blocks
+     * Only checks the first readable line for classification patterns
      * @param {string} emailBody - The email body text
      * @returns {Object} Classification detection result
      */
     detectClassificationByPatterns(emailBody) {
 
-        // Get first few lines for classification checking
-        const lines = emailBody.split('\n').slice(0, this.linesToCheck);
-        const headerText = lines.join('\n');
+        // Only check the first readable line for classification patterns
+        const lines = emailBody.split('\n');
+        let firstReadableLine = null;
+        
+        for (let i = 0; i < lines.length && i < 5; i++) { // Don't look beyond first 5 lines
+            const line = lines[i].trim();
+            if (line) {
+                firstReadableLine = line;
+                break;
+            }
+        }
+
+        if (!firstReadableLine) {
+            return {
+                detected: false,
+                text: 'UNCLASSIFIED',
+                restricted: false,
+                warning: false,
+                details: 'No readable content found'
+            };
+        }
+
+        // Reduced logging for pattern detection
+        // console.debug('[ClassificationDetector] Pattern detection on first line:', firstReadableLine);
 
         let highestClassification = null;
         let detectedMarkings = [];
 
-        // Check each pattern
+        // Check each pattern against the first line only
         for (const pattern of this.patterns) {
-            const matches = headerText.matchAll(pattern);
+            const matches = firstReadableLine.matchAll(pattern);
             
             for (const match of matches) {
                 let classification = null;
                 
                 // Extract classification based on pattern structure
                 if (match[0].includes('CLASSIFICATION:') || match[0].includes('CLASS:')) {
-                    // Pattern 3: classification banner - classification is in match[2]
+                    // Pattern with banner - classification is in match[2]
                     classification = this.normalizeClassification(match[2]);
                 } else {
-                    // Patterns 1, 2, 4: classification is in match[1]
+                    // Other patterns - classification is in match[1]
                     classification = this.normalizeClassification(match[1]);
                 }
                 
@@ -171,7 +211,7 @@ export class ClassificationDetector {
                         text: match[0].trim(),
                         classification: classification,
                         restricted: this.classifications[classification].restricted,
-                        line: this.findLineNumber(emailBody, match[0])
+                        line: 1
                     });
 
                     // Determine highest classification using priority order
@@ -188,6 +228,8 @@ export class ClassificationDetector {
 
         // If no classification found, assume unclassified
         if (!highestClassification) {
+            // Reduced logging to avoid console noise
+            // console.debug('[ClassificationDetector] No classification patterns found in first line');
             return {
                 detected: false,
                 text: 'UNCLASSIFIED',
@@ -412,4 +454,9 @@ export class ClassificationDetector {
         // For classified content, return only metadata
         return `[CLASSIFIED CONTENT - ${detection.text} - ${content.length} chars]`;
     }
+}
+
+// For Node.js testing compatibility
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = ClassificationDetector;
 }

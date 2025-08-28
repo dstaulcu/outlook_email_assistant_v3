@@ -7,7 +7,7 @@
     -SplunkHecUrl "https://splunk-prod.company.com:8088" `
     -Region "us-east-1" `
     -Environment "prod" `
-    -AllowedOrigin "https://293354421824-outlook-email-assistant-prd.s3.us-east-1.amazonaws.com"
+    -AllowedOrigin "https://293354421824-outlook-email-assistant-prod.s3.us-east-1.amazonaws.com"
 
 # Development deployment
 .\deploy-splunk-gateway.ps1 `

@@ -38,11 +38,41 @@ exports.handler = async (event) => {
         
         // Parse and validate request body
         let requestData;
+        let parsedEvents = [];
         try {
             requestData = typeof event.body === 'string' ? event.body : JSON.stringify(event.body);
             
-            // Validate it's valid JSON
-            JSON.parse(requestData);
+            // Parse each line as a separate JSON event (Splunk HEC format)
+            const lines = requestData.trim().split('\n');
+            for (const line of lines) {
+                if (line.trim()) {
+                    const eventData = JSON.parse(line);
+                    
+                    // Enrich with server-side information
+                    if (eventData.event) {
+                        // Add client IP address from API Gateway
+                        if (event.requestContext && event.requestContext.identity) {
+                            const identity = event.requestContext.identity;
+                            if (identity.sourceIp) {
+                                eventData.event.client_ip_address = identity.sourceIp;
+                            }
+                            if (identity.userAgent) {
+                                eventData.event.server_user_agent = identity.userAgent; // Server-side UA for verification
+                            }
+                        }
+                                               
+                        // Add Lambda execution context
+                        //if (process.env.AWS_LAMBDA_FUNCTION_NAME) {
+                        //    eventData.event.lambda_function_name = process.env.AWS_LAMBDA_FUNCTION_NAME;
+                        //}
+                    }
+                    
+                    parsedEvents.push(eventData);
+                }
+            }
+            
+            // Reconstruct the data for Splunk
+            requestData = parsedEvents.map(event => JSON.stringify(event)).join('\n');
             
         } catch (parseError) {
             console.error('Invalid JSON in request body:', parseError);

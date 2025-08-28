@@ -38,7 +38,7 @@ npm run build
 
 4. Deploy using the build and deploy script:
 ```bash
-.\tools\deploy_web_assets.ps1 -Environment Prd
+.\tools\deploy_web_assets.ps1 -Environment Prod
 ```
 
 5. Sideload the manifest (`manifest.xml`) in Outlook
@@ -71,7 +71,7 @@ npm run build
 - **Hosting**: AWS S3 static website hosting
 - **Telemetry Pipeline**: AWS API Gateway → Lambda → EC2 Splunk Enterprise for secure data collection
 - **Build Pipeline**: PowerShell-based build and deployment automation
-- **Environment Management**: Multi-environment support (Dev/Prd) with URL rewriting
+- **Environment Management**: Multi-environment support (Dev/Test/Prod) with URL rewriting
 - **Asset Management**: Automated file discovery and URL updating for deployments
 
 ### Office Integration

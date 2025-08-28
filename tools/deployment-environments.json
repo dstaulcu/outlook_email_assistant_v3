@@ -11,15 +11,26 @@
         "host": "293354421824-outlook-email-assistant-dev"
       }
     },
-    "Prd": {
+    "Test": {
       "region": "us-east-1",
       "publicUri": {
         "protocol": "https",
-        "host": "293354421824-outlook-email-assistant-prd.s3.us-east-1.amazonaws.com"
+        "host": "293354421824-outlook-email-assistant-test.s3.us-east-1.amazonaws.com"
       },
       "s3Uri": {
         "protocol": "s3",
-        "host": "293354421824-outlook-email-assistant-prd"
+        "host": "293354421824-outlook-email-assistant-test"
+      }
+    },
+    "Prod": {
+      "region": "us-east-1",
+      "publicUri": {
+        "protocol": "https",
+        "host": "293354421824-outlook-email-assistant-prod.s3.us-east-1.amazonaws.com"
+      },
+      "s3Uri": {
+        "protocol": "s3",
+        "host": "293354421824-outlook-email-assistant-prod"
       }
     }
   }

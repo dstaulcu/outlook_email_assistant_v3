@@ -289,7 +289,7 @@ export class SettingsManager {
      */
     getSetting(key, defaultValue = null) {
         const value = this.settings[key] !== undefined ? this.settings[key] : defaultValue;
-        console.log(`[SettingsManager] Getting setting '${key}':`, value);
+        console.log(`Getting setting '${key}':`, value);
         return value;
     }
 
@@ -300,10 +300,10 @@ export class SettingsManager {
      * @returns {Promise<boolean>} Success status
      */
     async setSetting(key, value) {
-        console.log(`[SettingsManager] Setting '${key}' to:`, value);
+        console.log(`Setting '${key}' to:`, value);
         this.settings[key] = value;
         const result = await this.saveSettings();
-        console.log(`[SettingsManager] Save result for '${key}':`, result);
+        console.log(`Save result for '${key}':`, result);
         return result;
     }
 

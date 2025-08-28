@@ -7,7 +7,7 @@
     and deploys the assets to AWS S3 with environment-specific URL rewriting.
 
 .PARAMETER Environment
-    Deployment environment: 'Dev' or 'Prd'
+    Deployment environment: 'Dev', 'Test', or 'Prod'
 
 .PARAMETER DryRun
     Show what would be deployed without actually deploying
@@ -21,7 +21,7 @@
 
 .EXAMPLE
     # Deploy to production with patch version increment
-    .\deploy_web_assets.ps1 -Environment Prd -IncrementVersion patch
+    .\deploy_web_assets.ps1 -Environment Prod -IncrementVersion patch
 
 .EXAMPLE
     # Deploy to development without version change
@@ -29,12 +29,12 @@
 
 .EXAMPLE
     # Dry run for production with minor version bump
-    .\deploy_web_assets.ps1 -Environment Prd -IncrementVersion minor -DryRun
+    .\deploy_web_assets.ps1 -Environment Prod -IncrementVersion minor -DryRun
 #>
 
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Dev', 'Prd')]
+    [ValidateSet('Dev', 'Test', 'Prod')]
     [string]$Environment,
     [switch]$DryRun,
     [switch]$Force,

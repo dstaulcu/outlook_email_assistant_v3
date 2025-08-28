@@ -18,7 +18,7 @@ param(
     [string]$Environment = "prod",
     
     [Parameter(Mandatory=$false)]
-    [string]$AllowedOrigin = "https://293354421824-outlook-email-assistant-prd.s3.us-east-1.amazonaws.com"
+    [string]$AllowedOrigin = "https://293354421824-outlook-email-assistant-prod.s3.us-east-1.amazonaws.com"
 )
 
 Write-Host "Deploying Splunk Gateway Infrastructure..." -ForegroundColor Green

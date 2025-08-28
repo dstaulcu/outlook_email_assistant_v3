@@ -72,6 +72,45 @@ export class EmailAnalyzer {
             });
         };
 
+        const getOutlookVersionAsync = () => {
+            return new Promise((resolveVersion) => {
+                try {
+                    // Get comprehensive version information from Office.context
+                    const diagnostics = Office.context.diagnostics;
+                    const versionInfo = {
+                        version: diagnostics?.version || 'Unknown',
+                        host: diagnostics?.host || 'Unknown',
+                        platform: diagnostics?.platform || 'Unknown',
+                        requirements: Office.context.requirements?.isSetSupported ? 'Supported' : 'Unknown'
+                    };
+                    console.log('Office diagnostics available:', diagnostics);
+                    resolveVersion(versionInfo);
+                } catch (error) {
+                    console.warn('Failed to get Outlook version:', error);
+                    resolveVersion({ version: 'Error', host: 'Unknown', platform: 'Unknown', requirements: 'Unknown' });
+                }
+            });
+        };
+
+        const getParentAsync = () => {
+            return new Promise((resolveParent) => {
+                try {
+                    // Try multiple methods to get parent/folder information
+                    const parentInfo = {
+                        itemParent: item.parent || null,
+                        displayedFolder: Office.context.mailbox.displayedFolder || null,
+                        itemId: item.itemId || 'Unknown',
+                        itemClass: item.itemClass || 'Unknown'
+                    };
+                    console.log('Parent folder info gathered:', parentInfo);
+                    resolveParent(parentInfo);
+                } catch (error) {
+                    console.warn('Failed to get parent folder:', error);
+                    resolveParent({ itemParent: null, displayedFolder: null, itemId: 'Error', itemClass: 'Error' });
+                }
+            });
+        };
+
         const getDateAsync = () => {
             return new Promise((resolveDate) => {
                 // For compose mode, especially replies, we don't want to show a misleading sent date
@@ -109,7 +148,7 @@ export class EmailAnalyzer {
         };
 
         // Get email body and other properties
-        const [bodyText, fromValue, recipientsValue, subjectValue, dateValue] = await Promise.all([
+        const [bodyText, fromValue, recipientsValue, subjectValue, dateValue, outlookVersion, parentInfo] = await Promise.all([
             new Promise((resolveBody, rejectBody) => {
                 item.body.getAsync(Office.CoercionType.Text, (result) => {
                     if (result.status === Office.AsyncResultStatus.Failed) {
@@ -122,7 +161,9 @@ export class EmailAnalyzer {
             getFromAsync(),
             getRecipientsAsync(),
             getSubjectAsync(),
-            getDateAsync()
+            getDateAsync(),
+            getOutlookVersionAsync(),
+            getParentAsync()
         ]);
 
         console.log('Async property results:', {
@@ -130,10 +171,20 @@ export class EmailAnalyzer {
             from: fromValue,
             recipients: recipientsValue,
             date: dateValue,
-            itemType: item.itemType
+            itemType: item.itemType,
+            outlookVersion: outlookVersion,
+            parent: parentInfo
         });
 
         const userProfile = Office.context.mailbox.userProfile;
+        
+        // Log user profile properties for future use
+        console.log('User Profile Properties:');
+        console.log('Full userProfile object:', userProfile);
+        console.log("User:", userProfile?.displayName || 'Not available');
+        console.log("Email:", userProfile?.emailAddress || 'Not available');
+        console.log("Time Zone:", userProfile?.timeZone || 'Not available');
+        console.log("Account Type:", userProfile?.accountType || 'Not available');
         
         // Check if this is a reply after we have the subject
         const subjectStr = this.getSubjectString({ subject: subjectValue });

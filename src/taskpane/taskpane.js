@@ -140,6 +140,9 @@ class TaskpaneApp {
             // Load current email
             await this.loadCurrentEmail();
             
+            // Check if user needs initial setup (first time user or missing API key)
+            await this.checkForInitialSetupNeeded();
+            
             // Try automatic analysis if conditions are met
             await this.attemptAutoAnalysis();
             
@@ -187,8 +190,8 @@ class TaskpaneApp {
             // Start telemetry auto-flush if enabled
             if (this.logger.telemetryConfig?.telemetry?.enabled) {
                 const provider = this.logger.telemetryConfig.telemetry.provider;
-                if (provider === 'splunk_hec' || provider === 'api_gateway') {
-                    this.logger.startSplunkAutoFlush();
+                if (provider === 'api_gateway') {
+                    this.logger.startApiGatewayAutoFlush();
                     console.info(`${provider} telemetry enabled and auto-flush started`);
                 }
             }
@@ -230,15 +233,6 @@ class TaskpaneApp {
             aiConfigPlaceholder.innerHTML = '';
         }
         if (this.modelServiceSelect && this.modelSelectGroup && this.modelSelect) {
-            this.modelServiceSelect.addEventListener('change', () => {
-                // Print resultant baseUrl to console for developer/support
-                const providerKey = this.modelServiceSelect.value;
-                if (this.defaultProvidersConfig && this.defaultProvidersConfig[providerKey]) {
-                    const baseUrl = this.defaultProvidersConfig[providerKey].baseUrl || '';
-                    console.debug(`Model provider key: ${providerKey}, base URL: ${baseUrl}`);
-                }
-                this.updateModelDropdown();
-            });
             // Set initial baseUrl to console
             if (this.modelServiceSelect.value && this.defaultProvidersConfig && this.defaultProvidersConfig[this.modelServiceSelect.value]) {
                 const baseUrl = this.defaultProvidersConfig[this.modelServiceSelect.value].baseUrl || '';
@@ -372,6 +366,88 @@ class TaskpaneApp {
         } catch (error) {
             console.error('Failed to load current email:', error);
             this.uiController.showError('Failed to load email. Please select an email and try again.');
+        }
+    }
+
+    async checkForInitialSetupNeeded(showSettingsIfNeeded = true) {
+        try {
+            const currentSettings = await this.settingsManager.getSettings();
+            const selectedService = currentSettings['model-service'] || 'onsite1'; // Default provider
+            
+            // Check if user has an API key configured for the default/selected provider
+            const providerConfigs = currentSettings['provider-configs'] || {};
+            const selectedProviderConfig = providerConfigs[selectedService] || {};
+            const apiKey = selectedProviderConfig['api-key'] || currentSettings['api-key'] || '';
+            
+            // Also check if this appears to be a first-time user (no last-updated timestamp)
+            const isFirstTime = !currentSettings['last-updated'];
+            
+            // If no API key is set for the selected provider, or if it's a first-time user
+            if (!apiKey.trim() || isFirstTime) {
+                if (showSettingsIfNeeded) {
+                    console.info('Initial setup needed - showing settings tab');
+                    
+                    // Show a welcome message for first-time users
+                    if (isFirstTime) {
+                        this.uiController.showStatus('Welcome! Please configure your AI provider settings to get started.');
+                    } else {
+                        this.uiController.showStatus('API key required. Please configure your API key in settings.');
+                    }
+                    
+                    // Switch to settings tab
+                    const settingsTab = document.querySelector('button[data-tab="settings"]');
+                    if (settingsTab) {
+                        settingsTab.click();
+                        
+                        // Highlight the API key field if it exists
+                        setTimeout(() => {
+                            const apiKeyField = document.getElementById('api-key');
+                            if (apiKeyField) {
+                                apiKeyField.style.borderColor = '#007bff';
+                                apiKeyField.style.borderWidth = '2px';
+                                apiKeyField.style.boxShadow = '0 0 0 0.2rem rgba(0, 123, 255, 0.25)';
+                                apiKeyField.focus();
+                                
+                                // Add a helpful tooltip or message
+                                let helpDiv = document.getElementById('api-key-help');
+                                if (!helpDiv) {
+                                    helpDiv = document.createElement('div');
+                                    helpDiv.id = 'api-key-help';
+                                    helpDiv.style.cssText = 'color: #007bff; font-size: 14px; margin-top: 5px; padding: 8px; background-color: #e7f3ff; border-radius: 4px; border: 1px solid #b8daff;';
+                                    helpDiv.innerHTML = '💡 Enter your API key here to start using the AI assistant. You can get your API key from your AI service provider.';
+                                    apiKeyField.parentNode.appendChild(helpDiv);
+                                }
+                                
+                                // Remove highlight after user starts typing
+                                const removeHighlight = () => {
+                                    apiKeyField.style.borderColor = '';
+                                    apiKeyField.style.borderWidth = '';
+                                    apiKeyField.style.boxShadow = '';
+                                    if (helpDiv) {
+                                        helpDiv.remove();
+                                    }
+                                    apiKeyField.removeEventListener('input', removeHighlight);
+                                };
+                                apiKeyField.addEventListener('input', removeHighlight);
+                            }
+                        }, 500);
+                    }
+                    
+                    // Log this event for analytics
+                    this.logger.logEvent('initial_setup_prompted', {
+                        selected_service: selectedService,
+                        has_api_key: !!apiKey.trim(),
+                        is_first_time: isFirstTime
+                    }, 'Information', this.getUserEmailForTelemetry());
+                }
+                
+                return true; // Indicates setup is needed
+            }
+            
+            return false; // No setup needed
+        } catch (error) {
+            console.error('Error checking for initial setup:', error);
+            return false; // Continue normally on error
         }
     }
 
@@ -580,6 +656,13 @@ class TaskpaneApp {
             return;
         }
 
+        // Skip auto-analysis if user is in initial setup mode (no API key configured)
+        const needsSetup = await this.checkForInitialSetupNeeded(false);
+        if (needsSetup) {
+            console.debug('Initial setup needed, skipping auto-analysis');
+            return;
+        }
+
         try {
             // Get current AI provider settings
             const currentSettings = await this.settingsManager.getSettings();
@@ -612,14 +695,6 @@ class TaskpaneApp {
             const classification = this.classificationDetector.detectClassification(this.currentEmail.body);
             console.debug('Email classification for auto-analysis:', classification);
             
-            // Check if provider supports this classification level
-            const isCompatible = await this.checkProviderClassificationCompatibility(selectedService, classification);
-            
-            if (!isCompatible) {
-                console.debug('Provider incompatible with classification, skipping auto-analysis');
-                return;
-            }
-            
             // Skip auto-analysis for SECRET or above
             if (classification.level > 2) {
                 console.debug('Classification level too high for auto-analysis');
@@ -645,6 +720,9 @@ class TaskpaneApp {
     }
 
     async performAnalysisWithResponse() {
+        const analysisStartTime = Date.now();
+        let analysisEndTime, responseStartTime, responseEndTime;
+        
         try {
             this.uiController.showStatus('Auto-analyzing email...');
             
@@ -657,12 +735,14 @@ class TaskpaneApp {
             
             // Perform analysis
             this.currentAnalysis = await this.aiService.analyzeEmail(this.currentEmail, config);
+            analysisEndTime = Date.now();
             
             // Display results
             this.displayAnalysis(this.currentAnalysis);
             
             // Auto-generate response as well (consolidating user actions)
             console.info('Auto-generating response after analysis...');
+            responseStartTime = Date.now();
             const responseConfig = this.getResponseConfiguration();
             
             // Check email context to determine response type
@@ -685,6 +765,7 @@ class TaskpaneApp {
                     { ...config, ...responseConfig }
                 );
             }
+            responseEndTime = Date.now();
             
             // Display the response
             this.displayResponse(this.currentResponse);
@@ -696,21 +777,20 @@ class TaskpaneApp {
             // Show refine button so user can modify the auto-generated response
             this.showRefineButton();
             
-            // Log successful auto-analysis and response generation
+            // Log successful auto-analysis and response generation with flattened performance metrics
             this.logger.logEvent('auto_analysis_completed', {
                 model_service: config.service,
                 model_name: config.model,
                 email_length: this.currentEmail.bodyLength,
-                classification: classificationResult.text,
-                classification_level: classificationResult.level,
                 auto_response_generated: true,
                 email_context: this.currentEmail.context ? (this.currentEmail.context.isSentMail ? 'sent' : 'inbox') : 'unknown',
                 generation_type: 'standard_response',
                 refinement_count: this.refinementCount,
                 clipboard_used: this.hasUsedClipboard,
-                performance_metrics: {
-                    start_time: Date.now()
-                }
+                // Flattened performance metrics
+                analysis_duration_ms: analysisEndTime - analysisStartTime,
+                response_generation_duration_ms: responseEndTime - responseStartTime,
+                total_duration_ms: responseEndTime - analysisStartTime
             }, 'Information', this.getUserEmailForTelemetry());
             
             this.uiController.showStatus('Email analyzed and draft response generated automatically.');
@@ -742,15 +822,6 @@ class TaskpaneApp {
         const currentSettings = await this.settingsManager.getSettings();
         const selectedService = currentSettings['model-service'];
         
-        // Check if provider supports this classification level
-        const isCompatible = await this.checkProviderClassificationCompatibility(selectedService, classification);
-        
-        if (!isCompatible) {
-            this.pendingAction = 'analyze';
-            this.showProviderClassificationWarning(selectedService, classification);
-            return;
-        }
-        
         // Check for restricted classifications (SECRET and above) - show warning for user override
         if (classification.restricted) {
             this.pendingAction = 'analyze';
@@ -759,54 +830,6 @@ class TaskpaneApp {
         }
 
         await this.performAnalysis();
-    }
-
-    async checkProviderClassificationCompatibility(serviceProvider, classification) {
-        console.debug('Checking provider compatibility:', serviceProvider, classification);
-        
-        try {
-            const providersConfig = await this.fetchDefaultProvidersConfig();
-            const providerInfo = providersConfig[serviceProvider];
-            
-            if (!providerInfo) {
-                console.warn('No provider configuration found for:', serviceProvider);
-                return true; // Allow if no config found
-            }
-            
-            if (providerInfo.supportedClassifications) {
-                const compatible = providerInfo.supportedClassifications.includes(classification.text);
-                console.debug(`Classification compatibility: ${classification.text} vs ${serviceProvider} supported: [${providerInfo.supportedClassifications.join(', ')}] = ${compatible}`);
-                return compatible;
-            }
-            
-            return true; // Allow if no classification restrictions
-        } catch (error) {
-            console.error('Error checking provider compatibility:', error);
-            return true; // Allow on error
-        }
-    }
-
-    showProviderClassificationWarning(provider, classification) {
-        const providersConfig = this.defaultProvidersConfig;
-        const providerInfo = providersConfig[provider];
-        const providerNote = providerInfo?.classificationNote || 'Classification restrictions apply';
-        
-        // Show the warning panel instead of just an error message
-        const warningPanel = document.getElementById('classification-warning');
-        const message = document.getElementById('classification-message');
-        
-        let warningText = `The selected AI provider "${provider}" does not support ${classification.text} classified content.\n\n${providerNote}\n\nProceeding may violate security policies and will be logged for compliance review.`;
-        
-        message.textContent = warningText;
-        warningPanel.classList.remove('hidden');
-        
-        // Log the incompatibility
-        this.logger.logEvent('classification_incompatible', {
-            ...this.getEmailIdentifiersForTelemetry(),
-            provider: provider,
-            classification: classification.text,
-            provider_supported_classifications: providerInfo?.supportedClassifications
-        });
     }
 
     showClassificationWarning(classification) {
@@ -824,38 +847,19 @@ class TaskpaneApp {
         message.textContent = warningText;
         warningPanel.classList.remove('hidden');
         
-        // Enhanced telemetry logging
-        this.logger.logEvent('classification_warning_shown', {
-            ...this.getEmailIdentifiersForTelemetry(),
-            classification: classification.text,
-            restricted: classification.restricted,
-            markings_found: classification.markings?.length || 0,
-            details: classification.details,
-            timestamp: new Date().toISOString()
-        });
+        // Classification warning shown - logged to browser console only
+        console.warn('Classification warning displayed:', classification.text);
     }
 
     async proceedWithWarning() {
         // Hide warning
         document.getElementById('classification-warning').classList.add('hidden');
         
-        // Get current classification and provider info for detailed logging
+        // Get current classification for console logging only
         const classification = this.classificationDetector.detectClassification(this.currentEmail.body);
-        const currentSettings = await this.settingsManager.getSettings();
-        const selectedService = currentSettings['model-service'];
-        const providerConfig = this.defaultProvidersConfig?.[selectedService];
         
-        // Enhanced telemetry logging for security compliance
-        this.logger.logEvent('classification_warning_overridden', {
-            ...this.getEmailIdentifiersForTelemetry(),
-            classification_detected: classification.text,
-            classification_restricted: classification.restricted,
-            classification_markings_count: classification.markings?.length || 0,
-            provider_used: selectedService,
-            provider_supported_classifications: providerConfig?.supportedClassifications,
-            timestamp: new Date().toISOString(),
-            warning_type: 'user_override'
-        });
+        // Classification warning overridden - logged to browser console only
+        console.warn('Classification warning overridden by user:', classification.text);
         
         // Proceed with the action the user was trying to perform
         if (this.pendingAction === 'analyze') {
@@ -941,30 +945,14 @@ class TaskpaneApp {
         }
     }
 
-    async isClassificationSupportedByProvider(classificationText) {
-        try {
-            const currentSettings = await this.settingsManager.getSettings();
-            const selectedService = currentSettings['model-service'];
-            const providersConfig = await this.fetchDefaultProvidersConfig();
-            const providerInfo = providersConfig[selectedService];
-            
-            if (!providerInfo || !providerInfo.supportedClassifications) {
-                return true; // Assume supported if no config (fail open for compatibility)
-            }
-            
-            return providerInfo.supportedClassifications.includes(classificationText);
-        } catch (error) {
-            console.error('Error checking classification support:', error);
-            return true; // Assume supported on error (fail open for compatibility)
-        }
-    }
-
     cancelAnalysis() {
         document.getElementById('classification-warning').classList.add('hidden');
         this.uiController.showStatus('Analysis cancelled due to classification restrictions.');
     }
 
     async performAnalysis() {
+        const analysisStartTime = Date.now();
+        
         try {
             this.uiController.showStatus('Analyzing email...');
             this.uiController.setButtonLoading('analyze-email', true);
@@ -978,34 +966,60 @@ class TaskpaneApp {
             
             // Perform analysis
             this.currentAnalysis = await this.aiService.analyzeEmail(this.currentEmail, config);
+            const analysisEndTime = Date.now();
             
             // Display results
             this.displayAnalysis(this.currentAnalysis);
             this.showResponseSection();
             
-            // Log successful analysis with enhanced telemetry
+            // Log successful analysis with flattened performance telemetry
             this.logger.logEvent('email_analyzed', {
                 model_service: config.service,
                 model_name: config.model,
                 email_length: this.currentEmail.bodyLength,
                 recipients_count: this.currentEmail.recipients.split(',').length,
-                classification: classificationResult.text,
-                classification_level: classificationResult.level,
-                classification_detected: classificationResult.detected,
-                has_markings: classificationResult.markings ? classificationResult.markings.length > 0 : false,
                 analysis_success: true,
                 refinement_count: this.refinementCount,
                 clipboard_used: this.hasUsedClipboard,
-                performance_metrics: {
-                    start_time: Date.now()
-                }
+                // Flattened performance metrics
+                analysis_duration_ms: analysisEndTime - analysisStartTime
             }, 'Information', this.getUserEmailForTelemetry());
             
             this.uiController.showStatus('Email analysis completed successfully.');
             
         } catch (error) {
             console.error('Analysis failed:', error);
-            this.uiController.showError('Analysis failed. Please check your API configuration and try again.');
+            
+            // Provide more specific error messages based on error type
+            let userMessage = 'Analysis failed. Please check your configuration and try again.';
+            let showSettings = false;
+            
+            if (error.message && error.message.includes('Authentication failed')) {
+                userMessage = 'Analysis failed: Invalid or missing API key. Please check your API key in the settings panel.';
+                showSettings = true;
+            } else if (error.message && error.message.includes('Access forbidden')) {
+                userMessage = 'Analysis failed: API key permissions issue. Please verify your key has the correct permissions.';
+                showSettings = true;
+            } else if (error.message && error.message.includes('Service not found')) {
+                userMessage = 'Analysis failed: Service endpoint not found. Please verify your endpoint URL in settings.';
+                showSettings = true;
+            } else if (error.message && error.message.includes('Rate limit exceeded')) {
+                userMessage = 'Analysis failed: Rate limit exceeded. Please wait a moment and try again.';
+            }
+            
+            // Show the error with additional context
+            this.uiController.showError(userMessage);
+            
+            // If it's a configuration issue, also provide a way to access settings
+            if (showSettings) {
+                // Switch to settings tab to help user fix the issue
+                setTimeout(() => {
+                    const settingsTab = document.querySelector('button[data-tab="settings"]');
+                    if (settingsTab) {
+                        settingsTab.click();
+                    }
+                }, 2000);
+            }
         } finally {
             this.uiController.setButtonLoading('analyze-email', false);
         }
@@ -1037,15 +1051,6 @@ class TaskpaneApp {
         // Get current AI provider settings
         const currentSettings = await this.settingsManager.getSettings();
         const selectedService = currentSettings['model-service'];
-        
-        // Check if provider supports this classification level
-        const isCompatible = await this.checkProviderClassificationCompatibility(selectedService, classification);
-        
-        if (!isCompatible) {
-            this.pendingAction = 'generateResponse';
-            this.showProviderClassificationWarning(selectedService, classification);
-            return;
-        }
         
         // Check for restricted classifications (SECRET and above) - show warning for user override
         if (classification.restricted) {
@@ -1112,7 +1117,35 @@ class TaskpaneApp {
             
         } catch (error) {
             console.error('Response generation failed:', error);
-            this.uiController.showError('Failed to generate response. Please try again.');
+            
+            // Provide more specific error messages based on error type
+            let userMessage = 'Failed to generate response. Please try again.';
+            let showSettings = false;
+            
+            if (error.message && error.message.includes('Authentication failed')) {
+                userMessage = 'Response generation failed: Invalid or missing API key. Please check your API key in the settings panel.';
+                showSettings = true;
+            } else if (error.message && error.message.includes('Access forbidden')) {
+                userMessage = 'Response generation failed: API key permissions issue. Please verify your key has the correct permissions.';
+                showSettings = true;
+            } else if (error.message && error.message.includes('Service not found')) {
+                userMessage = 'Response generation failed: Service endpoint not found. Please verify your endpoint URL in settings.';
+                showSettings = true;
+            } else if (error.message && error.message.includes('Rate limit exceeded')) {
+                userMessage = 'Response generation failed: Rate limit exceeded. Please wait a moment and try again.';
+            }
+            
+            this.uiController.showError(userMessage);
+            
+            // If it's a configuration issue, provide guidance to fix it
+            if (showSettings) {
+                setTimeout(() => {
+                    const settingsTab = document.querySelector('button[data-tab="settings"]');
+                    if (settingsTab) {
+                        settingsTab.click();
+                    }
+                }, 2000);
+            }
         } finally {
             this.uiController.setButtonLoading('generate-response', false);
         }
@@ -1200,7 +1233,34 @@ class TaskpaneApp {
                 analysis_available: !!analysisData
             }, 'Error', this.getUserEmailForTelemetry());
             
-            this.uiController.showError('Failed to generate follow-up suggestions. Please try again.');
+            // Provide more specific error messages based on error type
+            let userMessage = 'Failed to generate follow-up suggestions. Please try again.';
+            let showSettings = false;
+            
+            if (error.message && error.message.includes('Authentication failed')) {
+                userMessage = 'Follow-up generation failed: Invalid or missing API key. Please check your API key in the settings panel.';
+                showSettings = true;
+            } else if (error.message && error.message.includes('Access forbidden')) {
+                userMessage = 'Follow-up generation failed: API key permissions issue. Please verify your key has the correct permissions.';
+                showSettings = true;
+            } else if (error.message && error.message.includes('Service not found')) {
+                userMessage = 'Follow-up generation failed: Service endpoint not found. Please verify your endpoint URL in settings.';
+                showSettings = true;
+            } else if (error.message && error.message.includes('Rate limit exceeded')) {
+                userMessage = 'Follow-up generation failed: Rate limit exceeded. Please wait a moment and try again.';
+            }
+            
+            this.uiController.showError(userMessage);
+            
+            // If it's a configuration issue, provide guidance to fix it
+            if (showSettings) {
+                setTimeout(() => {
+                    const settingsTab = document.querySelector('button[data-tab="settings"]');
+                    if (settingsTab) {
+                        settingsTab.click();
+                    }
+                }, 2000);
+            }
         } finally {
             this.uiController.setButtonLoading('generate-response', false);
         }
@@ -1440,7 +1500,23 @@ class TaskpaneApp {
                     ? models.map(m => `<option value="${m}">${m}</option>`).join('')
                     : '<option value="">No models found</option>';
             } catch (err) {
-                errorMsg = `Error fetching models: ${err.message || err}`;
+                errorMsg = err.message || `Error fetching models: ${err}`;
+                
+                // Show more helpful error display for authentication issues
+                if (err.message && err.message.includes('Authentication failed')) {
+                    // Highlight API key field or show settings reminder
+                    const apiKeyField = document.getElementById('api-key');
+                    if (apiKeyField) {
+                        apiKeyField.style.borderColor = '#dc3545';
+                        apiKeyField.style.borderWidth = '2px';
+                        // Remove highlight after 5 seconds
+                        setTimeout(() => {
+                            apiKeyField.style.borderColor = '';
+                            apiKeyField.style.borderWidth = '';
+                        }, 5000);
+                    }
+                }
+                
                 // Use knownModels from provider config as fallback, or global config fallback
                 const serviceKey = this.modelServiceSelect.value;
                 const providerConfig = this.defaultProvidersConfig?.[serviceKey];
@@ -1464,12 +1540,26 @@ class TaskpaneApp {
             if (!errorDiv) {
                 errorDiv = document.createElement('div');
                 errorDiv.id = 'model-select-error';
-                errorDiv.style.color = 'red';
+                errorDiv.style.cssText = 'color: #dc3545; background-color: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; padding: 8px; margin-top: 5px; font-size: 14px; line-height: 1.4;';
                 this.modelSelectGroup.appendChild(errorDiv);
             }
-            errorDiv.textContent = errorMsg;
+            
+            // Create more helpful error messages with action suggestions
+            let displayMessage = errorMsg;
+            if (errorMsg.includes('Authentication failed')) {
+                displayMessage = '🔐 ' + errorMsg + '\n\n💡 Tip: Check that your API key is entered correctly and has not expired.';
+            } else if (errorMsg.includes('Access forbidden')) {
+                displayMessage = '🚫 ' + errorMsg + '\n\n💡 Tip: Contact your administrator to verify API key permissions.';
+            } else if (errorMsg.includes('Service not found')) {
+                displayMessage = '🔗 ' + errorMsg + '\n\n💡 Tip: Verify your endpoint URL is correct and the service is running.';
+            } else if (errorMsg.includes('Rate limit exceeded')) {
+                displayMessage = '⏰ ' + errorMsg + '\n\n💡 Tip: Wait a few moments before trying again.';
+            }
+            
+            errorDiv.innerHTML = displayMessage.replace(/\n/g, '<br>');
+            errorDiv.style.display = 'block';
         } else if (errorDiv) {
-            errorDiv.remove();
+            errorDiv.style.display = 'none';
         }
         // Hide AI config placeholder in main UI if model discovery succeeds
         if (aiConfigPlaceholder) {
