@@ -65,7 +65,7 @@ const exampleTelemetryEvent = {
     "clipboard_used": false
 };
 
-console.log('Example telemetry event with flattened Office diagnostics:');
+console.info('[INFO] - Example telemetry event with flattened Office diagnostics:');
 console.log(JSON.stringify(exampleTelemetryEvent, null, 2));
 
 // Example of combined analysis + response generation event
@@ -95,7 +95,7 @@ const combinedOperationEvent = {
     "generation_type": "standard_response"
 };
 
-console.log('\nExample combined operation event:');
+console.info('[INFO] - \nExample combined operation event:');
 console.log(JSON.stringify(combinedOperationEvent, null, 2));
 
 /**
@@ -149,5 +149,5 @@ const fallbackExample = {
     "environment_host": "localhost"
 };
 
-console.log('\nFallback telemetry event when Office context unavailable:');
+console.info('[INFO] - \nFallback telemetry event when Office context unavailable:');
 console.log(JSON.stringify(fallbackExample, null, 2));

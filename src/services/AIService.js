@@ -50,7 +50,7 @@ export class AIService {
      */
     updateProvidersConfig(providersConfig) {
         this.providersConfig = providersConfig || {};
-        console.debug('Updated AIService provider config:', this.providersConfig);
+        console.debug('[VERBOSE] - Updated AIService provider config:', this.providersConfig);
     }
 
     /**
@@ -103,16 +103,16 @@ export class AIService {
      */
     async testConnection(config) {
         try {
-            console.debug('Testing connection for service:', config.service);
+            console.debug('[VERBOSE] - Testing connection for service:', config.service);
             
             // Simple ping test with minimal prompt
             const testPrompt = "Hello, respond with 'OK'";
             await this.callAI(testPrompt, config, 'health-check');
             
-            console.debug('Connection test passed');
+            console.debug('[VERBOSE] - Connection test passed');
             return true;
         } catch (error) {
-            console.warn('Connection test failed:', error.message);
+            console.warn('[WARN] - Connection test failed:', error.message);
             return false;
         }
     }
@@ -137,7 +137,7 @@ export class AIService {
             // Ollama returns { models: [{ name: ... }, ...] }
             return (data.models || []).map(m => m.name);
         } catch (err) {
-            console.error('Error fetching Ollama models:', err);
+            console.error('[ERROR] - Error fetching Ollama models:', err);
             return [];
         }
     }
@@ -179,30 +179,30 @@ export class AIService {
             // OpenAI-compatible APIs return { data: [{ id: ... }, ...] }
             return (data.data || []).map(m => m.id);
         } catch (err) {
-            console.error('Error fetching OpenAI-compatible models:', err);
+            console.error('[ERROR] - Error fetching OpenAI-compatible models:', err);
             // Re-throw with original error message if it's already detailed
             throw err;
         }
     }
     
     async analyzeEmail(emailData, config) {
-        console.debug('Starting email analysis...');
-        console.debug('Email data:', emailData);
-        console.debug('AI provider config:', config);
+        console.debug('[VERBOSE] - Starting email analysis...');
+        console.debug('[VERBOSE] - Email data:', emailData);
+        console.debug('[VERBOSE] - AI provider config:', config);
         
         const prompt = this.buildAnalysisPrompt(emailData);
-        console.debug('Built analysis prompt:', prompt);
+        console.debug('[VERBOSE] - Built analysis prompt:', prompt);
         
         try {
-            console.debug('Calling AI for analysis...');
+            console.debug('[VERBOSE] - Calling AI for analysis...');
             const response = await this.callAI(prompt, config, 'analysis');
-            console.debug('Raw analysis response:', response);
+            console.debug('[VERBOSE] - Raw analysis response:', response);
             
             const parsed = this.parseAnalysisResponse(response);
-            console.info('Parsed analysis result:', parsed);
+            console.info('[INFO] - Parsed LLM analysis result:', parsed);
             return parsed;
         } catch (error) {
-            console.error('Email analysis failed:', error);
+            console.error('[ERROR] - Email analysis failed:', error);
             throw new Error('Failed to analyze email: ' + error.message);
         }
     }
@@ -215,14 +215,14 @@ export class AIService {
      * @returns {Promise<Object>} Generated response
      */
     async generateResponse(emailData, analysis, config) {
-        console.debug('Starting response generation...');
-        console.debug('Email data:', emailData);
-        console.debug('Analysis:', analysis);
-        console.debug('Config:', config);
+        console.debug('[VERBOSE] - Starting response generation...');
+        console.debug('[VERBOSE] - Email data:', emailData);
+        console.debug('[VERBOSE] - Analysis:', analysis);
+        console.debug('[VERBOSE] - Config:', config);
         
         // Ensure analysis is not null - provide default if missing
         if (!analysis) {
-            console.warn('Analysis is null, providing default analysis structure');
+            console.warn('[WARN] - Analysis is null, providing default analysis structure');
             analysis = {
                 keyPoints: ['No analysis available'],
                 sentiment: 'neutral',
@@ -231,18 +231,18 @@ export class AIService {
         }
         
         const prompt = this.buildResponsePrompt(emailData, analysis, config);
-        console.debug('Built response prompt:', prompt);
+        console.debug('[VERBOSE] - Built response prompt:', prompt);
         
         try {
-            console.debug('Calling AI for response generation...');
+            console.debug('[VERBOSE] - Calling AI for response generation...');
             const response = await this.callAI(prompt, config, 'response');
-            console.debug('Raw response generation result:', response);
+            console.debug('[VERBOSE] - Raw response generation result:', response);
             
             const parsed = this.parseResponseResult(response);
-            console.info('Parsed response result:', parsed);
+            console.info('[INFO] - Parsed LLM response result:', parsed);
             return parsed;
         } catch (error) {
-            console.error('Response generation failed:', error);
+            console.error('[ERROR] - Response generation failed:', error);
             throw new Error('Failed to generate response: ' + error.message);
         }
     }
@@ -255,14 +255,14 @@ export class AIService {
      * @returns {Promise<Object>} Generated follow-up suggestions
      */
     async generateFollowupSuggestions(emailData, analysis, config) {
-        console.debug('Starting follow-up suggestions generation...');
-        console.debug('Email data:', emailData);
-        console.debug('Analysis:', analysis);
-        console.debug('Config:', config);
+        console.debug('[VERBOSE] - Starting follow-up suggestions generation...');
+        console.debug('[VERBOSE] - Email data:', emailData);
+        console.debug('[VERBOSE] - Analysis:', analysis);
+        console.debug('[VERBOSE] - Config:', config);
         
         // Ensure analysis is not null - provide default if missing
         if (!analysis) {
-            console.warn('Analysis is null, providing default analysis structure');
+            console.warn('[WARN] - Analysis is null, providing default analysis structure');
             analysis = {
                 keyPoints: ['Sent email content analyzed'],
                 sentiment: 'neutral',
@@ -271,18 +271,18 @@ export class AIService {
         }
         
         const prompt = this.buildFollowupPrompt(emailData, analysis, config);
-        console.debug('Built follow-up prompt:', prompt);
+        console.debug('[VERBOSE] - Built follow-up prompt:', prompt);
         
         try {
-            console.debug('Calling AI for follow-up suggestions generation...');
+            console.debug('[VERBOSE] - Calling AI for follow-up suggestions generation...');
             const response = await this.callAI(prompt, config, 'followup');
-            console.debug('Raw follow-up suggestions result:', response);
+            console.debug('[VERBOSE] - Raw follow-up suggestions result:', response);
             
             const parsed = this.parseFollowupResult(response);
-            console.info('Parsed follow-up suggestions result:', parsed);
+            console.info('[INFO] - Parsed LLM follow-up suggestions result:', parsed);
             return parsed;
         } catch (error) {
-            console.error('Follow-up suggestions generation failed:', error);
+            console.error('[ERROR] - Follow-up suggestions generation failed:', error);
             throw new Error('Failed to generate follow-up suggestions: ' + error.message);
         }
     }
@@ -302,7 +302,7 @@ export class AIService {
             const response = await this.callAI(prompt, config, 'refinement');
             return this.parseResponseResult(response);
         } catch (error) {
-            console.error('Response refinement failed:', error);
+            console.error('[ERROR] - Response refinement failed:', error);
             throw new Error('Failed to refine response: ' + error.message);
         }
     }
@@ -478,10 +478,10 @@ Format your response as JSON with the following structure:
      * @returns {Object} Parsed follow-up suggestions
      */
     parseFollowupResult(response) {
-        console.debug('Parsing follow-up suggestions response:', response);
+        console.debug('[VERBOSE] - Parsing follow-up suggestions response:', response);
         
         if (!response || typeof response !== 'string') {
-            console.warn('Invalid follow-up suggestions response, using fallback');
+            console.warn('[WARN] - Invalid follow-up suggestions response, using fallback');
             return {
                 suggestions: 'No follow-up suggestions could be generated at this time.',
                 type: 'followup'
@@ -584,27 +584,27 @@ Provide only the email body text that should be sent.`;
      * @returns {Promise<string>} AI response text
      */
     async callAI(prompt, config, type) {
-        console.debug(`Starting AI call for type: ${type}`);
-        console.debug('Prompt:', prompt);
-        console.debug('Config:', config);
+        console.debug(`[VERBOSE] - Starting AI call for type: ${type}`);
+        console.debug('[VERBOSE] - Prompt:', prompt);
+        console.debug('[VERBOSE] - Config:', config);
         
         const service = config.service || 'openai';
-        console.debug(`Using service: ${service}`);
+        console.debug(`[VERBOSE] - Using service: ${service}`);
 
         if (service === 'custom') {
-            console.debug('Calling custom endpoint...');
+            console.debug('[VERBOSE] - Calling custom endpoint...');
             return this.callCustomEndpoint(prompt, config);
         }
 
         // Validate service is configured in providers config
         if (!this.providersConfig[service] && service !== 'custom') {
-            console.error(`[AIService] Service not configured: ${service}`);
+            console.error(`[ERROR] - AIService Service not configured: ${service}`);
             throw new Error(`AI service '${service}' is not configured in providers config`);
         }
 
         // Build endpoint using provider configuration and user overrides
         let endpoint = this.buildEndpoint(service, config);
-        console.debug('Final endpoint:', endpoint);
+        console.debug('[VERBOSE] - Final endpoint:', endpoint);
 
         let requestBody;
         let headers;
@@ -616,24 +616,24 @@ Provide only the email body text that should be sent.`;
                 stream: false
             };
             headers = { 'Content-Type': 'application/json' };
-            console.debug('Built Ollama request body:', requestBody);
+            console.debug('[VERBOSE] - Built Ollama request body:', requestBody);
         } else {
             // For OpenAI, onsite1, onsite2, and other providers, use OpenAI-compatible format
             requestBody = this.buildRequestBody(prompt, service, config);
             headers = this.buildHeaders(service, config);
-            console.debug('Built request body:', requestBody);
+            console.debug('[VERBOSE] - Built request body:', requestBody);
         }
-        console.debug('Request headers:', headers);
+        console.debug('[VERBOSE] - Request headers:', headers);
 
         // Debug: Log POST request body to console
-        console.debug('Making API call to endpoint:', endpoint);
-        console.debug('Request Body:', requestBody);
+        console.debug('[VERBOSE] - Making API call to endpoint:', endpoint);
+        console.debug('[VERBOSE] - Request Body:', requestBody);
         let response = await fetch(endpoint, {
             method: 'POST',
             headers: headers,
             body: JSON.stringify(requestBody)
         });
-        console.debug(`[AIService] Got response with status: ${response.status} ${response.statusText}`);
+        console.debug(`[VERBOSE] - Got response with status: ${response.status} ${response.statusText}`);
 
         // Fallback to /api/generate if /api/chat fails with 405
         if (service === 'ollama' && response.status === 405) {
@@ -647,7 +647,7 @@ Provide only the email body text that should be sent.`;
             }
             
             const fallbackEndpoint = `${baseUrl}/api/generate`;
-            console.warn('Ollama /api/chat failed with 405, retrying with /api/generate:', fallbackEndpoint);
+            console.warn('[WARN] - Ollama /api/chat failed with 405, retrying with /api/generate:', fallbackEndpoint);
             
             // For /api/generate, we need to restructure the request body
             const generateRequestBody = {
@@ -661,13 +661,13 @@ Provide only the email body text that should be sent.`;
                 headers: headers,
                 body: JSON.stringify(generateRequestBody)
             });
-            console.debug(`[AIService] Fallback response status: ${response.status} ${response.statusText}`);
+            console.debug(`[VERBOSE] - Fallback response status: ${response.status} ${response.statusText}`);
         }
 
         if (!response.ok) {
             const errorText = await response.text();
-            console.error(`[AIService] API request failed: ${response.status} ${response.statusText}`);
-            console.error('Error response:', errorText);
+            console.error(`[ERROR] - AIService API request failed: ${response.status} ${response.statusText}`);
+            console.error('[ERROR] - Error response:', errorText);
             
             let userFriendlyMessage = '';
             
@@ -704,12 +704,12 @@ Provide only the email body text that should be sent.`;
             throw new Error(userFriendlyMessage);
         }
 
-        console.debug('Response OK, parsing JSON...');
+        console.debug('[VERBOSE] - Response OK, parsing JSON...');
         const data = await response.json();
-        console.debug('Response data:', data);
+        console.debug('[VERBOSE] - Response data:', data);
         
         const extractedText = this.extractResponseText(data, service);
-        console.debug('Extracted response text:', extractedText);
+        console.debug('[VERBOSE] - Extracted response text:', extractedText);
         return extractedText;
     }
 

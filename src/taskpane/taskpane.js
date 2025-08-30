@@ -18,7 +18,7 @@ class TaskpaneApp {
             if (!response.ok) throw new Error('Failed to fetch ai-providers.json');
             return await response.json();
         } catch (e) {
-            console.warn('[Default Providers] Could not load ai-providers.json:', e);
+            console.warn('[WARN] - Could not load ai-providers.json:', e);
             return {};
         }
     }
@@ -27,10 +27,10 @@ class TaskpaneApp {
         // Switch to the response tab in the UI
         const responseTabButton = document.querySelector('.tab-button[aria-controls="panel-response"]');
         if (responseTabButton) {
-            console.debug('Switching to response tab');
+            console.debug('[VERBOSE] - Switching to response tab');
             responseTabButton.click();
         } else {
-            console.error('Response tab button not found');
+            console.error('[ERROR] - Response tab button not found');
         }
     }
     showResponseSection() {
@@ -43,7 +43,7 @@ class TaskpaneApp {
     constructor() {
         // Add unique instance ID for debugging
         this.instanceId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-        console.debug('TaskpaneApp instance created:', this.instanceId);
+        console.debug('[VERBOSE] - TaskpaneApp instance created:', this.instanceId);
         
         this.emailAnalyzer = new EmailAnalyzer();
         this.aiService = new AIService();
@@ -56,8 +56,6 @@ class TaskpaneApp {
         this.currentEmail = null;
         this.currentAnalysis = null;
         this.currentResponse = null;
-        this.pendingAction = null; // Track what action user wants after warning override
-        this.classificationOverrideGranted = false; // Track if user has already overridden classification for current email
         this.sessionStartTime = Date.now();
         
         // Telemetry tracking properties
@@ -115,7 +113,7 @@ class TaskpaneApp {
             // Apply accessibility settings immediately after loading
             const currentSettings = await this.settingsManager.getSettings();
             if (currentSettings['high-contrast']) {
-                console.debug('Applying high contrast during initialization');
+                console.debug('[VERBOSE] - Applying high contrast during initialization');
                 this.toggleHighContrast(true);
             }
             
@@ -156,7 +154,7 @@ class TaskpaneApp {
             });
             
         } catch (error) {
-            console.error('Failed to initialize TaskpaneApp:', error);
+            console.error('[ERROR] - Failed to initialize TaskpaneApp:', error);
             this.uiController.showError('Failed to initialize application. Please try again.');
         }
     }
@@ -176,13 +174,13 @@ class TaskpaneApp {
     }
 
     async initializeTelemetry() {
-        console.debug('Initializing telemetry...');
+        console.debug('[VERBOSE] - Initializing telemetry...');
         
         try {
             // Logger already initialized telemetry config in constructor, just check if it's ready
             // If not initialized yet, wait for it
             if (!this.logger.telemetryConfig) {
-                console.debug('Waiting for telemetry config to load...');
+                console.debug('[VERBOSE] - Waiting for telemetry config to load...');
                 // Give it a moment to load
                 await new Promise(resolve => setTimeout(resolve, 100));
             }
@@ -192,12 +190,12 @@ class TaskpaneApp {
                 const provider = this.logger.telemetryConfig.telemetry.provider;
                 if (provider === 'api_gateway') {
                     this.logger.startApiGatewayAutoFlush();
-                    console.info(`${provider} telemetry enabled and auto-flush started`);
+                    console.info(`[INFO] - ${provider} telemetry enabled and auto-flush started`);
                 }
             }
             
         } catch (error) {
-            console.error('Failed to initialize telemetry:', error);
+            console.error('[ERROR] - Failed to initialize telemetry:', error);
         }
     }
 
@@ -236,7 +234,7 @@ class TaskpaneApp {
             // Set initial baseUrl to console
             if (this.modelServiceSelect.value && this.defaultProvidersConfig && this.defaultProvidersConfig[this.modelServiceSelect.value]) {
                 const baseUrl = this.defaultProvidersConfig[this.modelServiceSelect.value].baseUrl || '';
-                console.debug(`Model provider: ${this.modelServiceSelect.value}, base URL: ${baseUrl}`);
+                console.debug(`[VERBOSE] - Model provider: ${this.modelServiceSelect.value}, base URL: ${baseUrl}`);
             }
             await this.updateModelDropdown();
         }
@@ -247,10 +245,6 @@ class TaskpaneApp {
         document.getElementById('analyze-email').addEventListener('click', () => this.analyzeEmail());
         document.getElementById('generate-response').addEventListener('click', () => this.generateResponse());
         document.getElementById('refine-response').addEventListener('click', () => this.refineResponse());
-
-        // Classification warning buttons
-        document.getElementById('proceed-anyway').addEventListener('click', () => this.proceedWithWarning());
-        document.getElementById('cancel-analysis').addEventListener('click', () => this.cancelAnalysis());
 
         // Response actions
         document.getElementById('copy-response').addEventListener('click', () => this.copyResponse());
@@ -355,16 +349,15 @@ class TaskpaneApp {
     async loadCurrentEmail() {
         try {
             this.currentEmail = await this.emailAnalyzer.getCurrentEmail();
-            this.classificationOverrideGranted = false; // Reset override flag for new email
             
             // Ensure context is properly stored on currentEmail for later use
             if (this.currentEmail && this.currentEmail.context) {
-                console.debug('Email context loaded:', this.currentEmail.context);
+                console.debug('[VERBOSE] - Email context loaded:', this.currentEmail.context);
             }
             
             await this.displayEmailSummary(this.currentEmail);
         } catch (error) {
-            console.error('Failed to load current email:', error);
+            console.error('[ERROR] - Failed to load current email:', error);
             this.uiController.showError('Failed to load email. Please select an email and try again.');
         }
     }
@@ -385,7 +378,7 @@ class TaskpaneApp {
             // If no API key is set for the selected provider, or if it's a first-time user
             if (!apiKey.trim() || isFirstTime) {
                 if (showSettingsIfNeeded) {
-                    console.info('Initial setup needed - showing settings tab');
+                    console.info('[INFO] - Initial setup needed - showing settings tab');
                     
                     // Show a welcome message for first-time users
                     if (isFirstTime) {
@@ -446,28 +439,20 @@ class TaskpaneApp {
             
             return false; // No setup needed
         } catch (error) {
-            console.error('Error checking for initial setup:', error);
+            console.error('[ERROR] - Error checking for initial setup:', error);
             return false; // Continue normally on error
         }
     }
 
     async displayEmailSummary(email) {
-        console.debug('Displaying email summary:', email);
+        console.debug('[VERBOSE] - Displaying email summary:', email);
         
         // Email overview section has been removed for cleaner UI
-        // Classification checks still run in background for AI compatibility
         
-        // Enhanced classification detection for AI provider compatibility
-        let classificationResult = null;
-        
+        // Detect classification for console logging only (no storage)
         if (email.body) {
-            classificationResult = this.classificationDetector.detectClassification(email.body);
-            console.debug('Classification result:', classificationResult);
-        }
-        
-        // Store classification result for later use
-        if (classificationResult) {
-            email.classificationResult = classificationResult;
+            const classificationResult = this.classificationDetector.detectClassification(email.body);
+            console.debug('[VERBOSE] - Classification detected (logging only):', classificationResult);
         }
 
         // Context-aware UI adaptation (works behind the scenes)
@@ -479,30 +464,26 @@ class TaskpaneApp {
      * @param {Object} context - Context information from EmailAnalyzer
      */
     adaptUIForContext(context) {
-        console.debug('Adapting UI for context:', context);
+        console.debug('[VERBOSE] - Adapting UI for context:', context);
         
         if (!context) {
-            console.warn('No context provided for UI adaptation');
+            console.warn('[WARN] - No context provided for UI adaptation');
             return;
         }
 
         // Log detailed context information for debugging
-        console.debug('Context details:', {
+        console.debug('[VERBOSE] - Context details:', {
             isSentMail: context.isSentMail,
             isInbox: context.isInbox,
             isCompose: context.isCompose,
-            folderType: context.folderType,
             debugInfo: context.debugInfo
         });
         
         // Log telemetry for context detection
         this.logger.logEvent('email_context_detected', {
             context_type: context.isSentMail ? 'sent' : (context.isCompose ? 'compose' : 'inbox'),
-            folder_detection_available: context.debugInfo ? context.debugInfo.folderDetectionAttempted : false,
-            folder_api_result: context.debugInfo ? context.debugInfo.folderApiResult : 'unknown',
             detection_method: context.debugInfo ? context.debugInfo.detectionMethod : 'unknown',
-            email_comparison_used: context.debugInfo ? context.debugInfo.emailComparisonUsed : false,
-            folder_type: context.folderType || 'unknown'
+            email_comparison_used: context.debugInfo ? context.debugInfo.emailComparisonUsed : false
         }, 'Information', this.getUserEmailForTelemetry());
         
         try {
@@ -516,18 +497,18 @@ class TaskpaneApp {
             
             // Apply context-specific adaptations (affects button behavior)
             if (context.isCompose) {
-                console.debug('Applying compose mode UI adaptations');
+                console.debug('[VERBOSE] - Applying compose mode UI adaptations');
                 this.adaptUIForComposeMode();
             } else if (context.isSentMail) {
-                console.debug('Applying sent mail UI adaptations');
+                console.debug('[VERBOSE] - Applying sent mail UI adaptations');
                 this.adaptUIForSentMail();
             } else {
-                console.debug('Applying inbox mail UI adaptations');
+                console.debug('[VERBOSE] - Applying inbox mail UI adaptations');
                 this.adaptUIForInboxMail();
             }
 
         } catch (error) {
-            console.error('Error adapting UI for context:', error);
+            console.error('[ERROR] - Error adapting UI for context:', error);
         }
     }
 
@@ -535,7 +516,7 @@ class TaskpaneApp {
      * Adapts UI for compose mode (writing new email)
      */
     adaptUIForComposeMode() {
-        console.debug('Adapting UI for compose mode');
+        console.debug('[VERBOSE] - Adapting UI for compose mode');
         
         // Hide analysis features since we're composing
         this.setElementVisibility('analyze-email', false);
@@ -554,7 +535,7 @@ class TaskpaneApp {
      * Adapts UI for sent mail (viewing previously sent emails)
      */
     adaptUIForSentMail() {
-        console.debug('Adapting UI for sent mail');
+        console.debug('[VERBOSE] - Adapting UI for sent mail');
         
         // Show analysis with different focus
         this.setButtonText('analyze-email', '📋 Analyze Sent Message');
@@ -573,7 +554,7 @@ class TaskpaneApp {
      * Adapts UI for inbox mail (received emails)
      */
     adaptUIForInboxMail() {
-        console.debug('Adapting UI for inbox mail (received)');
+        console.debug('[VERBOSE] - Adapting UI for inbox mail (received)');
         
         // Standard inbox functionality
         this.setButtonText('analyze-email', '🔍 Analyze Email');
@@ -648,25 +629,25 @@ class TaskpaneApp {
     }
 
     async attemptAutoAnalysis() {
-        console.debug('Checking if automatic analysis should be performed...');
+        console.debug('[VERBOSE] - Checking if automatic analysis should be performed...');
         
         // Only auto-analyze if we have an email
         if (!this.currentEmail) {
-            console.debug('No email available for auto-analysis');
+            console.debug('[VERBOSE] - No email available for auto-analysis');
             return;
         }
 
         // Skip auto-analysis if user is in initial setup mode (no API key configured)
         const needsSetup = await this.checkForInitialSetupNeeded(false);
         if (needsSetup) {
-            console.debug('Initial setup needed, skipping auto-analysis');
+            console.debug('[VERBOSE] - Initial setup needed, skipping auto-analysis');
             return;
         }
 
         try {
             // Get current AI provider settings
             const currentSettings = await this.settingsManager.getSettings();
-            console.debug('[DEBUG] Auto-analysis settings check:', {
+            console.debug('[VERBOSE] Auto-analysis settings check:', {
                 fullSettings: currentSettings,
                 modelService: currentSettings['model-service'],
                 modelServiceType: typeof currentSettings['model-service'],
@@ -677,7 +658,7 @@ class TaskpaneApp {
             
             // Also check what the UI element shows
             const modelServiceElement = document.getElementById('model-service');
-            console.debug('[DEBUG] UI element check:', {
+            console.debug('[VERBOSE] UI element check:', {
                 elementExists: !!modelServiceElement,
                 elementValue: modelServiceElement?.value,
                 elementType: typeof modelServiceElement?.value,
@@ -687,34 +668,31 @@ class TaskpaneApp {
             });
             
             if (!selectedService) {
-                console.warn('No AI service configured, skipping auto-analysis');
+                console.warn('[WARN] - No AI service configured, skipping auto-analysis');
                 return;
             }
 
-            // Check for classification compatibility with selected provider
+            // Check for classification (console logging only)
             const classification = this.classificationDetector.detectClassification(this.currentEmail.body);
-            console.debug('Email classification for auto-analysis:', classification);
+            console.debug('[VERBOSE] - Email classification for auto-analysis:', classification);
             
-            // Skip auto-analysis for SECRET or above
-            if (classification.level > 2) {
-                console.debug('Classification level too high for auto-analysis');
-                return;
-            }
+            // Always proceed with auto-analysis regardless of classification
+            // Classification is only logged for reference
 
             // Test AI service health
             const config = this.getAIConfiguration();
             const isHealthy = await this.aiService.testConnection(config);
             
             if (!isHealthy) {
-                console.debug('AI service not healthy, skipping auto-analysis');
+                console.debug('[VERBOSE] - AI service not healthy, skipping auto-analysis');
                 return;
             }
 
-            console.info('Conditions met, performing automatic analysis...');
+            console.info('[INFO] - Connection to AI service is healthy, performing automatic analysis...');
             await this.performAnalysisWithResponse();
             
         } catch (error) {
-            console.error('Error during auto-analysis check:', error);
+            console.error('[ERROR] - Error during auto-analysis check:', error);
             // Don't show error to user, just skip auto-analysis
         }
     }
@@ -729,10 +707,6 @@ class TaskpaneApp {
             // Get AI configuration
             const config = this.getAIConfiguration();
             
-            // Get classification information for telemetry
-            const classificationResult = this.currentEmail.classificationResult || 
-                this.classificationDetector.detectClassification(this.currentEmail.body);
-            
             // Perform analysis
             this.currentAnalysis = await this.aiService.analyzeEmail(this.currentEmail, config);
             analysisEndTime = Date.now();
@@ -741,7 +715,7 @@ class TaskpaneApp {
             this.displayAnalysis(this.currentAnalysis);
             
             // Auto-generate response as well (consolidating user actions)
-            console.info('Auto-generating response after analysis...');
+            console.info('[INFO] - Auto-generating response after analysis...');
             responseStartTime = Date.now();
             const responseConfig = this.getResponseConfiguration();
             
@@ -750,7 +724,7 @@ class TaskpaneApp {
             
             if (emailContext.isSentMail) {
                 // Generate follow-up suggestions for sent mail
-                console.info('Generating follow-up suggestions for sent mail...');
+                console.info('[INFO] - Generating follow-up suggestions for sent mail...');
                 this.currentResponse = await this.aiService.generateFollowupSuggestions(
                     this.currentEmail, 
                     this.currentAnalysis, 
@@ -758,7 +732,7 @@ class TaskpaneApp {
                 );
             } else {
                 // Generate response for received mail
-                console.info('Generating response for received mail...');
+                console.info('[INFO] - Generating response for received mail...');
                 this.currentResponse = await this.aiService.generateResponse(
                     this.currentEmail, 
                     this.currentAnalysis, 
@@ -796,7 +770,7 @@ class TaskpaneApp {
             this.uiController.showStatus('Email analyzed and draft response generated automatically.');
             
         } catch (error) {
-            console.error('Auto-analysis failed:', error);
+            console.error('[ERROR] - Auto-analysis failed:', error);
             this.uiController.showStatus('Automatic analysis failed. You can still analyze manually.');
         }
     }
@@ -807,147 +781,12 @@ class TaskpaneApp {
             return;
         }
 
-        // Check for classification compatibility with selected provider
+        // Check for classification (console logging only)
         const classification = this.classificationDetector.detectClassification(this.currentEmail.body);
-        console.debug('Email classification check:', classification);
+        console.debug('[VERBOSE] - Email classification check:', classification);
         
-        // Skip classification checks if user has already overridden for this email
-        if (this.classificationOverrideGranted) {
-            console.debug('Classification override already granted, proceeding with analysis');
-            await this.performAnalysis();
-            return;
-        }
-        
-        // Get current AI provider settings
-        const currentSettings = await this.settingsManager.getSettings();
-        const selectedService = currentSettings['model-service'];
-        
-        // Check for restricted classifications (SECRET and above) - show warning for user override
-        if (classification.restricted) {
-            this.pendingAction = 'analyze';
-            this.showClassificationWarning(classification);
-            return;
-        }
-
+        // Always proceed with analysis - no restrictions based on classification
         await this.performAnalysis();
-    }
-
-    showClassificationWarning(classification) {
-        const warningPanel = document.getElementById('classification-warning');
-        const message = document.getElementById('classification-message');
-        
-        let warningText = `This email is classified as ${classification.text}.`;
-        
-        if (classification.markings && classification.markings.length > 0) {
-            warningText += ` Found ${classification.markings.length} classification marking${classification.markings.length > 1 ? 's' : ''}.`;
-        }
-        
-        warningText += ` Proceeding may violate security policies and will be logged for compliance review.`;
-        
-        message.textContent = warningText;
-        warningPanel.classList.remove('hidden');
-        
-        // Classification warning shown - logged to browser console only
-        console.warn('Classification warning displayed:', classification.text);
-    }
-
-    async proceedWithWarning() {
-        // Hide warning
-        document.getElementById('classification-warning').classList.add('hidden');
-        
-        // Get current classification for console logging only
-        const classification = this.classificationDetector.detectClassification(this.currentEmail.body);
-        
-        // Classification warning overridden - logged to browser console only
-        console.warn('Classification warning overridden by user:', classification.text);
-        
-        // Proceed with the action the user was trying to perform
-        if (this.pendingAction === 'analyze') {
-            await this.performAnalysis();
-        } else if (this.pendingAction === 'generateResponse') {
-            await this.continueResponseGeneration();
-        } else {
-            // Default to analysis if no pending action
-            await this.performAnalysis();
-        }
-        
-        // Mark that user has overridden classification for this email
-        this.classificationOverrideGranted = true;
-        
-        // Clear pending action
-        this.pendingAction = null;
-    }
-
-    async continueResponseGeneration() {
-        // This function contains the response generation logic without classification checks
-        // since the user has already been warned and chosen to proceed
-        try {
-            this.uiController.showStatus('Generating response...');
-            this.uiController.setButtonLoading('generate-response', true);
-            
-            // Get configuration
-            const config = this.getAIConfiguration();
-            const responseConfig = this.getResponseConfiguration();
-            
-            // Ensure we have analysis data - if not, run analysis first
-            let analysisData = this.currentAnalysis;
-            if (!analysisData) {
-                console.warn('No current analysis available, running analysis first');
-                this.uiController.showStatus('Analyzing email before generating response...');
-                
-                try {
-                    // Run analysis first (this will bypass classification checks since we're in override mode)
-                    await this.performAnalysis();
-                    analysisData = this.currentAnalysis;
-                    
-                    if (!analysisData) {
-                        // If analysis still failed, create minimal default
-                        console.warn('Analysis failed, using default analysis');
-                        analysisData = {
-                            keyPoints: ['Email content needs response'],
-                            sentiment: 'neutral',
-                            responseStrategy: 'respond professionally and appropriately'
-                        };
-                    }
-                } catch (analysisError) {
-                    console.warn('Analysis failed, using default analysis:', analysisError);
-                    analysisData = {
-                        keyPoints: ['Email content needs response'],
-                        sentiment: 'neutral',
-                        responseStrategy: 'respond professionally and appropriately'
-                    };
-                }
-                
-                this.uiController.showStatus('Generating response...');
-            }
-            
-            // Generate response
-            this.currentResponse = await this.aiService.generateResponse(
-                this.currentEmail,
-                analysisData,
-                { ...config, ...responseConfig }
-            );
-
-            console.info('Response generated:', this.currentResponse);
-            
-            // Display response
-            this.displayResponse(this.currentResponse);
-            this.switchToResponseTab();
-            this.showRefineButton();
-            
-            this.uiController.showStatus('Response generated successfully.');
-            
-        } catch (error) {
-            console.error('Response generation failed:', error);
-            this.uiController.showError('Failed to generate response. Please try again.');
-        } finally {
-            this.uiController.setButtonLoading('generate-response', false);
-        }
-    }
-
-    cancelAnalysis() {
-        document.getElementById('classification-warning').classList.add('hidden');
-        this.uiController.showStatus('Analysis cancelled due to classification restrictions.');
     }
 
     async performAnalysis() {
@@ -959,10 +798,6 @@ class TaskpaneApp {
             
             // Get AI configuration
             const config = this.getAIConfiguration();
-            
-            // Get classification information for telemetry
-            const classificationResult = this.currentEmail.classificationResult || 
-                this.classificationDetector.detectClassification(this.currentEmail.body);
             
             // Perform analysis
             this.currentAnalysis = await this.aiService.analyzeEmail(this.currentEmail, config);
@@ -988,7 +823,7 @@ class TaskpaneApp {
             this.uiController.showStatus('Email analysis completed successfully.');
             
         } catch (error) {
-            console.error('Analysis failed:', error);
+            console.error('[ERROR] - Analysis failed:', error);
             
             // Provide more specific error messages based on error type
             let userMessage = 'Analysis failed. Please check your configuration and try again.';
@@ -1037,27 +872,9 @@ class TaskpaneApp {
             return;
         }
 
-        // Check for classification compatibility with selected provider BEFORE generating
+        // Detect email classification for logging purposes only
         const classification = this.classificationDetector.detectClassification(this.currentEmail.body);
-        console.debug('Email classification check for response generation:', classification);
-        
-        // Skip classification checks if user has already overridden for this email
-        if (this.classificationOverrideGranted) {
-            console.debug('Classification override already granted, proceeding with response generation');
-            await this.continueResponseGeneration();
-            return;
-        }
-        
-        // Get current AI provider settings
-        const currentSettings = await this.settingsManager.getSettings();
-        const selectedService = currentSettings['model-service'];
-        
-        // Check for restricted classifications (SECRET and above) - show warning for user override
-        if (classification.restricted) {
-            this.pendingAction = 'generateResponse';
-            this.showClassificationWarning(classification);
-            return;
-        }
+        console.debug('[VERBOSE] - Email classification detected for response generation:', classification);
 
         try {
             this.uiController.showStatus('Generating response...');
@@ -1070,7 +887,7 @@ class TaskpaneApp {
             // Ensure we have analysis data - if not, run analysis first
             let analysisData = this.currentAnalysis;
             if (!analysisData) {
-                console.warn('No current analysis available, running analysis first');
+                console.warn('[WARN] - No current analysis available, running analysis first');
                 this.uiController.showStatus('Analyzing email before generating response...');
                 
                 try {
@@ -1080,7 +897,7 @@ class TaskpaneApp {
                     
                     if (!analysisData) {
                         // If analysis still failed, create minimal default
-                        console.warn('Analysis failed, using default analysis');
+                        console.warn('[WARN] - Analysis failed, using default analysis');
                         analysisData = {
                             keyPoints: ['Email content needs response'],
                             sentiment: 'neutral',
@@ -1088,7 +905,7 @@ class TaskpaneApp {
                         };
                     }
                 } catch (analysisError) {
-                    console.warn('Analysis failed, using default analysis:', analysisError);
+                    console.warn('[WARN] - Analysis failed, using default analysis:', analysisError);
                     analysisData = {
                         keyPoints: ['Email content needs response'],
                         sentiment: 'neutral',
@@ -1106,7 +923,7 @@ class TaskpaneApp {
                 { ...config, ...responseConfig }
             );
             
-            console.info('Response generated:', this.currentResponse);
+            console.info('[INFO] - Response generated:', this.currentResponse);
             
             // Display response
             this.displayResponse(this.currentResponse);
@@ -1116,7 +933,7 @@ class TaskpaneApp {
             this.uiController.showStatus('Response generated successfully.');
             
         } catch (error) {
-            console.error('Response generation failed:', error);
+            console.error('[ERROR] - Response generation failed:', error);
             
             // Provide more specific error messages based on error type
             let userMessage = 'Failed to generate response. Please try again.';
@@ -1168,7 +985,7 @@ class TaskpaneApp {
             // Ensure we have analysis data - if not, run analysis first
             let analysisData = this.currentAnalysis;
             if (!analysisData) {
-                console.warn('No current analysis available, running analysis first');
+                console.warn('[WARN] - No current analysis available, running analysis first');
                 this.uiController.showStatus('Analyzing sent email before generating follow-up suggestions...');
                 
                 try {
@@ -1183,7 +1000,7 @@ class TaskpaneApp {
                         };
                     }
                 } catch (analysisError) {
-                    console.warn('Analysis failed, using default analysis:', analysisError);
+                    console.warn('[WARN] - Analysis failed, using default analysis:', analysisError);
                     analysisData = {
                         keyPoints: ['Sent email content analyzed'],
                         sentiment: 'neutral', 
@@ -1201,7 +1018,7 @@ class TaskpaneApp {
                 { ...config, ...responseConfig }
             );
             
-            console.info('Follow-up suggestions generated:', this.currentResponse);
+            console.info('[INFO] - Follow-up suggestions generated:', this.currentResponse);
             
             // Log telemetry for follow-up suggestions generation
             this.logger.logEvent('followup_suggestions_generated', {
@@ -1223,7 +1040,7 @@ class TaskpaneApp {
             this.uiController.showStatus('Follow-up suggestions generated successfully.');
             
         } catch (error) {
-            console.error('Follow-up suggestion generation failed:', error);
+            console.error('[ERROR] - Follow-up suggestion generation failed:', error);
             
             // Log telemetry for failed follow-up suggestions
             this.logger.logEvent('followup_suggestions_failed', {
@@ -1310,7 +1127,7 @@ class TaskpaneApp {
             }, 'Information', this.getUserEmailForTelemetry());
             
         } catch (error) {
-            console.error('Response refinement failed:', error);
+            console.error('[ERROR] - Response refinement failed:', error);
             this.uiController.showError('Failed to refine response. Please try again.');
         } finally {
             this.uiController.setButtonLoading('refine-response', false);
@@ -1626,16 +1443,16 @@ class TaskpaneApp {
     }
 
     displayResponse(response) {
-        console.debug('Displaying response:', response);
+        console.debug('[VERBOSE] - Displaying response:', response);
         const container = document.getElementById('response-draft');
         
         if (!container) {
-            console.error('response-draft container not found');
+            console.error('[ERROR] - response-draft container not found');
             return;
         }
         
         if (!response || (!response.text && !response.suggestions)) {
-            console.error('Invalid response object:', response);
+            console.error('[ERROR] - Invalid response object:', response);
             container.innerHTML = '<div class="error">Error: Invalid response received</div>';
             return;
         }
@@ -1654,7 +1471,7 @@ class TaskpaneApp {
             </div>
         `;
         
-        console.info('Response displayed successfully');
+        console.info('[INFO] - Response displayed successfully');
     }
 
     escapeHtml(text) {
@@ -1699,7 +1516,7 @@ class TaskpaneApp {
                 response_length: formattedText.length
             }, 'Information', this.getUserEmailForTelemetry());
         } catch (error) {
-            console.error('Failed to copy response:', error);
+            console.error('[ERROR] - Failed to copy response:', error);
             this.uiController.showError('Failed to copy response to clipboard.');
         }
     }
@@ -1743,8 +1560,8 @@ class TaskpaneApp {
             formatted = formatted.replace(/((?:Hi|Hello|Dear)\s+[^,]+,)\s*([A-Z])/gi, '$1\n\n$2');
         }
         
-        console.debug('formatTextForDisplay - Original:', JSON.stringify(text));
-        console.debug('formatTextForDisplay - Formatted:', JSON.stringify(formatted));
+        console.debug('[VERBOSE] - formatTextForDisplay - Original:', JSON.stringify(text));
+        console.debug('[VERBOSE] - formatTextForDisplay - Formatted:', JSON.stringify(formatted));
         
         return formatted;
     }
@@ -1786,8 +1603,8 @@ class TaskpaneApp {
         // Final cleanup
         formatted = formatted.trim();
         
-        console.debug('[formatTextForClipboard] Original:', JSON.stringify(text));
-        console.debug('[formatTextForClipboard] Formatted:', JSON.stringify(formatted));
+        console.debug('[VERBOSE] - formatTextForClipboard Original:', JSON.stringify(text));
+        console.debug('[VERBOSE] - formatTextForClipboard Formatted:', JSON.stringify(formatted));
         
         return formatted;
     }
@@ -1797,7 +1614,7 @@ class TaskpaneApp {
     }
 
     async onModelServiceChange(event) {
-        console.debug('[DEBUG] onModelServiceChange triggered:', {
+        console.debug('[VERBOSE] onModelServiceChange triggered:', {
             value: event.target.value,
             oldValue: event.target.dataset.oldValue || 'undefined'
         });
@@ -1829,7 +1646,7 @@ class TaskpaneApp {
         // Update model dropdown first (this will set default model and save settings)
         await this.updateModelDropdown();
         
-        console.debug('[DEBUG] About to save settings after model service change');
+        console.debug('[VERBOSE] About to save settings after model service change');
         await this.saveSettings();
     }
 
@@ -1897,7 +1714,7 @@ class TaskpaneApp {
             }
             
         } catch (error) {
-            console.error('Error during settings reset:', error);
+            console.error('[ERROR] - Error during settings reset:', error);
             await this.showInfoDialog('Error', 'An error occurred while resetting settings. Please try again.');
         }
     }
@@ -2065,7 +1882,7 @@ class TaskpaneApp {
                     try {
                         window.open(helpUrl, '_blank', 'noopener,noreferrer');
                     } catch (error) {
-                        console.error('Error opening help URL:', error);
+                        console.error('[ERROR] - Error opening help URL:', error);
                         await this.showInfoDialog('Error', 'Unable to open help page. Please visit the URL manually.');
                     }
                 }
@@ -2091,7 +1908,7 @@ class TaskpaneApp {
         try {
             window.open(githubUrl, '_blank', 'noopener,noreferrer');
         } catch (error) {
-            console.error('Error opening source repository:', error);
+            console.error('[ERROR] - Error opening source repository:', error);
             // Fallback: copy URL to clipboard if available
             if (navigator.clipboard && navigator.clipboard.writeText) {
                 navigator.clipboard.writeText(githubUrl).then(() => {
@@ -2118,7 +1935,7 @@ class TaskpaneApp {
         try {
             window.open(issuesUrl, '_blank', 'noopener,noreferrer');
         } catch (error) {
-            console.error('Error opening issues page:', error);
+            console.error('[ERROR] - Error opening issues page:', error);
             // Fallback: copy URL to clipboard if available
             if (navigator.clipboard && navigator.clipboard.writeText) {
                 navigator.clipboard.writeText(issuesUrl).then(() => {
@@ -2145,7 +1962,7 @@ class TaskpaneApp {
         try {
             window.open(wikiUrl, '_blank', 'noopener,noreferrer');
         } catch (error) {
-            console.error('Error opening wiki:', error);
+            console.error('[ERROR] - Error opening wiki:', error);
             // Fallback: copy URL to clipboard if available
             if (navigator.clipboard && navigator.clipboard.writeText) {
                 navigator.clipboard.writeText(wikiUrl).then(() => {
@@ -2172,7 +1989,7 @@ class TaskpaneApp {
         try {
             window.open(telemetryUrl, '_blank', 'noopener,noreferrer');
         } catch (error) {
-            console.error('Error opening telemetry dashboard:', error);
+            console.error('[ERROR] - Error opening telemetry dashboard:', error);
             // Fallback: copy URL to clipboard if available
             if (navigator.clipboard && navigator.clipboard.writeText) {
                 navigator.clipboard.writeText(telemetryUrl).then(() => {
@@ -2190,9 +2007,9 @@ class TaskpaneApp {
     }
 
     toggleHighContrast(enabled) {
-        console.debug('toggleHighContrast called:', enabled);
+        console.debug('[VERBOSE] - toggleHighContrast called:', enabled);
         document.body.classList.toggle('high-contrast', enabled);
-        console.debug('body classes after toggle:', document.body.classList.toString());
+        console.debug('[VERBOSE] - body classes after toggle:', document.body.classList.toString());
         this.saveSettings();
     }
 
@@ -2245,13 +2062,13 @@ class TaskpaneApp {
                 // Fall back to first option if default provider not found
                 const chosenOption = selectedOption || modelServiceSelect.options[0].value;
                 modelServiceSelect.value = chosenOption;
-                console.debug(`[TaskPane-${this.instanceId}] Setting default model-service to: ${chosenOption} (configured: ${defaultProvider})`);
+                console.debug(`[VERBOSE] - TaskPane-${this.instanceId} Setting default model-service to: ${chosenOption} (configured: ${defaultProvider})`);
                 
                 // Save this default to settings
                 const updatedSettings = this.settingsManager.getSettings();
                 updatedSettings['model-service'] = chosenOption;
                 await this.settingsManager.saveSettings(updatedSettings);
-                console.debug(`[TaskPane-${this.instanceId}] Saved default model-service to settings: ${chosenOption}`);
+                console.debug(`[VERBOSE] - TaskPane-${this.instanceId} Saved default model-service to settings: ${chosenOption}`);
             }
         }
 
@@ -2266,7 +2083,7 @@ class TaskpaneApp {
         }
 
         if (settings['high-contrast']) {
-            console.debug('Applying high contrast setting on load:', settings['high-contrast']);
+            console.debug('[VERBOSE] - Applying high contrast setting on load:', settings['high-contrast']);
             this.toggleHighContrast(true);
         }
 
@@ -2280,7 +2097,7 @@ class TaskpaneApp {
         
         // Collect all form values except provider-specific ones
         const inputs = document.querySelectorAll('input, select, textarea');
-        console.debug('[DEBUG] saveSettings: Found', inputs.length, 'form elements');
+        console.debug('[VERBOSE] saveSettings: Found', inputs.length, 'form elements');
         
         inputs.forEach((input, index) => {
             if (input.id) {
@@ -2293,7 +2110,7 @@ class TaskpaneApp {
                 formSettings[input.id] = value;
                 
                 if (input.id === 'model-service') {
-                    console.debug('[DEBUG] model-service element details:', {
+                    console.debug('[VERBOSE] model-service element details:', {
                         index: index,
                         id: input.id,
                         type: input.type,
@@ -2306,7 +2123,7 @@ class TaskpaneApp {
             }
         });
         
-        console.debug('[DEBUG] saveSettings collected:', formSettings);
+        console.debug('[VERBOSE] saveSettings collected:', formSettings);
         
         // Merge form settings with existing settings to preserve provider-configs
         const currentSettings = this.settingsManager.getSettings();
@@ -2328,7 +2145,7 @@ class TaskpaneApp {
         const apiKey = apiKeyElement ? apiKeyElement.value.trim() : '';
         const endpointUrl = endpointUrlElement ? endpointUrlElement.value.trim() : '';
         
-        console.debug(`[DEBUG] Saving settings for provider ${provider}:`, { 
+        console.debug(`[VERBOSE] Saving settings for provider ${provider}:`, { 
             apiKeyLength: apiKey.length, 
             endpointUrl,
             hasApiKey: !!apiKey,
@@ -2422,7 +2239,7 @@ class TaskpaneApp {
             const userProfile = Office.context.mailbox.userProfile;
             return userProfile ? userProfile.emailAddress : null;
         } catch (error) {
-            console.warn('Unable to get user profile for telemetry:', error);
+            console.warn('[WARN] - Unable to get user profile for telemetry:', error);
             return null;
         }
     }
@@ -2486,6 +2303,6 @@ class TaskpaneApp {
 Office.onReady(() => {
     const app = new TaskpaneApp();
     app.initialize().catch(error => {
-        console.error('Failed to initialize application:', error);
+        console.error('[ERROR] - Failed to initialize application:', error);
     });
 });

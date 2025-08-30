@@ -121,14 +121,6 @@ export class AccessibilityManager {
             this.announce('Settings panel closed');
             return;
         }
-
-        // Close classification warning
-        const warningPanel = document.getElementById('classification-warning');
-        if (warningPanel && !warningPanel.classList.contains('hidden')) {
-            document.getElementById('cancel-analysis').click();
-            this.announce('Classification warning dismissed');
-            return;
-        }
     }
 
     /**

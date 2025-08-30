@@ -182,12 +182,6 @@ body.high-contrast textarea {
     border: 2px solid #ffffff !important;
 }
 
-body.high-contrast .classification {
-    background: #000000 !important;
-    color: #ffff00 !important;
-    border: 2px solid #ffff00 !important;
-}
-
 /* === Layout === */
 .container {
     display: flex;
@@ -635,38 +629,6 @@ section h3 {
     }
 } */
 
-/* === Warning Panel === */
-.warning-panel {
-    background: #fff8e1;
-    border: 1px solid var(--color-warning);
-    border-radius: var(--border-radius-large);
-    padding: var(--spacing-md);
-    margin-bottom: var(--spacing-lg);
-    display: flex;
-    gap: var(--spacing-md);
-}
-
-.warning-icon {
-    font-size: var(--font-size-xl);
-    flex-shrink: 0;
-}
-
-.warning-content {
-    flex: 1;
-}
-
-.warning-content h3 {
-    margin: 0 0 var(--spacing-sm) 0;
-    color: var(--color-warning);
-    font-size: var(--font-size-md);
-}
-
-.warning-actions {
-    display: flex;
-    gap: var(--spacing-sm);
-    margin-top: var(--spacing-md);
-}
-
 /* === Tabs === */
 .response-tabs {
     display: flex;
@@ -965,48 +927,6 @@ section h3 {
     .action-buttons .btn {
         max-width: 200px;
     }
-}
-
-/* === Classification Styles === */
-.classification {
-    padding: var(--spacing-xs) var(--spacing-sm);
-    border-radius: var(--border-radius);
-    font-weight: 600;
-    font-size: var(--font-size-sm);
-    text-align: center;
-    margin: var(--spacing-xs) 0;
-    border: 2px solid;
-}
-
-.classification-green {
-    background-color: #d4edda;
-    color: #155724;
-    border-color: #c3e6cb;
-}
-
-.classification-yellow {
-    background-color: #fff3cd;
-    color: #856404;
-    border-color: #ffeaa7;
-}
-
-.classification-orange {
-    background-color: #f8d7da;
-    color: #721c24;
-    border-color: #f1b0b7;
-}
-
-.classification-red {
-    background-color: #f8d7da;
-    color: #721c24;
-    border-color: #f1b0b7;
-    animation: pulse-warning 2s infinite;
-}
-
-@keyframes pulse-warning {
-    0% { opacity: 1; }
-    50% { opacity: 0.7; }
-    100% { opacity: 1; }
 }
 
 /* === Context Display Styles === */

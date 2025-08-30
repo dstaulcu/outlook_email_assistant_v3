@@ -1,11 +1,11 @@
-# Email Identifiers for Compliance and Review
+# Email Identifiers for Analysis and Review
 
-This document outlines the non-content-revealing identifiers available for email tracking and compliance review in the Outlook Email Assistant.
+This document outlines the non-content-revealing identifiers available for email tracking and analysis review in the Outlook Email Assistant.
 
 ## Available Email Identifiers
 
 ### Primary Identifiers
-These are unique identifiers provided by Outlook/Office.js that can be used to locate specific emails for compliance review:
+These are unique identifiers provided by Outlook/Office.js that can be used to locate specific emails for analysis review:
 
 1. **conversationId** - Groups related emails in a conversation thread
 2. **itemId** - Unique identifier for the specific email item in Outlook
@@ -23,25 +23,18 @@ These provide email context without revealing content:
 10. **isReply** - Boolean indicating if this is a reply/forward
 11. **date** - Email timestamp
 
-## Usage in Security Compliance
+## Usage in Analysis and Logging
 
-### Classification Override Tracking
-When users override security classification warnings, the system logs:
-- All email identifiers above
-- Classification detected and markings count
-- Provider used and supported classifications  
+### Email Analysis Tracking
+When emails are analyzed, the system logs:
+- All email identifiers above for correlation
+- AI provider used for analysis
 - User ID and timestamp
-- Type of override action taken
+- Analysis results and success status
 
-### Provider Incompatibility Logging
-When emails contain classifications not supported by the current provider:
-- Email identifiers for review lookup
-- Provider and classification details
-- List of classifications supported by the provider
+## Analysis Review Process
 
-## Compliance Review Process
-
-To review a specific email incident:
+To review a specific email analysis:
 
 1. **Locate by conversationId** - Find all emails in the thread
 2. **Locate by itemId** - Find the exact email item  
@@ -51,20 +44,19 @@ To review a specific email incident:
 
 ## Professional Use Context
 
-The telemetry system recognizes that national security professionals may need to override 
-classification restrictions when operational requirements demand it. The system:
+The telemetry system provides factual analysis data for:
 
-- **Records override events** for pattern analysis and compliance documentation
-- **Provides factual data** without prejudgment about appropriateness of actions
-- **Enables oversight** through aggregate analysis rather than individual incident review
-- **Supports professional discretion** while maintaining audit capabilities
+- **Analysis tracking** for usage pattern analysis and system improvement
+- **Performance metrics** without content disclosure
+- **System monitoring** through aggregate analysis
+- **Quality assurance** while maintaining privacy
 
 ## Privacy Protection
 
 All identifiers are designed to:
-- Enable email location for compliance review
+- Enable email location for analysis review
 - Avoid revealing email content or subject text
-- Provide sufficient metadata for incident analysis
+- Provide sufficient metadata for system analysis
 - Comply with data protection requirements
 
 ## Example Telemetry Output
@@ -81,21 +73,18 @@ All identifiers are designed to:
   "itemType": "Message",
   "isReply": true,
   "date": "2025-08-18T15:30:00.000Z",
-  "classification_detected": "SECRET",
   "provider_used": "ollama-local",
-  "provider_supported_classifications": ["UNCLASSIFIED", "CONFIDENTIAL"],
   "userId": "user@company.com",
-  "warning_type": "user_override",
   "timestamp": "2025-08-18T15:31:23.456Z",
-  "eventType": "classification_warning_overridden",
+  "eventType": "email_analyzed",
   "sessionId": "sess_123456789_abc",
   "source": "PromptEmail",
   "version": "1.0.0"
 }
 ```
 
-This structure allows security teams to:
-- Locate the specific email for manual review
+This structure allows analysis teams to:
+- Locate the specific email for review if needed
 - Understand the operational context 
 - Track usage patterns over time
-- Support compliance documentation and oversight
+- Support system improvement and monitoring

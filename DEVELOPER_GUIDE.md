@@ -290,8 +290,8 @@ debugger; // Force breakpoint in code
 ```javascript
 // Use structured logging for debugging
 console.group('Email Analysis');
-console.log('Email content:', emailText);
-console.log('Classification result:', classificationResult);
+console.info('[INFO] - Email content:', emailText);
+console.info('[INFO] - Classification result:', classificationResult);
 console.groupEnd();
 ```
 

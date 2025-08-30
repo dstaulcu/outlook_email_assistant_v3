@@ -5134,7 +5134,7 @@ OSF.initializeRichCommon = function() {
             if (window.external && OSF.OUtil.externalNativeFunctionExists(typeof window.external.GetContext))
                 b = OSF.DDA._OsfControlContext = window.external.GetContext();
             else {
-                console.error("There is no window.external.");
+                console.error('[ERROR] - There is no window.external.');
                 OsfMsAjaxFactory.msAjaxDebug.trace(l);
                 return
             }

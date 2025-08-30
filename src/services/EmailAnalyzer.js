@@ -28,7 +28,7 @@ export class EmailAnalyzer {
                         if (result.status === Office.AsyncResultStatus.Succeeded) {
                             resolveFrom(result.value);
                         } else {
-                            console.warn('Failed to get from async:', result.error);
+                            console.warn('[WARN] - Failed to get from async:', result.error);
                             resolveFrom(null);
                         }
                     });
@@ -45,7 +45,7 @@ export class EmailAnalyzer {
                         if (result.status === Office.AsyncResultStatus.Succeeded) {
                             resolveRecipients({ to: result.value, cc: item.cc, bcc: item.bcc });
                         } else {
-                            console.warn('Failed to get recipients async:', result.error);
+                            console.warn('[WARN] - Failed to get recipients async:', result.error);
                             resolveRecipients({ to: null, cc: item.cc, bcc: item.bcc });
                         }
                     });
@@ -62,7 +62,7 @@ export class EmailAnalyzer {
                         if (result.status === Office.AsyncResultStatus.Succeeded) {
                             resolveSubject(result.value);
                         } else {
-                            console.warn('Failed to get subject async:', result.error);
+                            console.warn('[WARN] - Failed to get subject async:', result.error);
                             resolveSubject(item.subject);
                         }
                     });
@@ -83,30 +83,10 @@ export class EmailAnalyzer {
                         platform: diagnostics?.platform || 'Unknown',
                         requirements: Office.context.requirements?.isSetSupported ? 'Supported' : 'Unknown'
                     };
-                    console.log('Office diagnostics available:', diagnostics);
                     resolveVersion(versionInfo);
                 } catch (error) {
-                    console.warn('Failed to get Outlook version:', error);
+                    console.warn('[WARN] - Failed to get Outlook version:', error);
                     resolveVersion({ version: 'Error', host: 'Unknown', platform: 'Unknown', requirements: 'Unknown' });
-                }
-            });
-        };
-
-        const getParentAsync = () => {
-            return new Promise((resolveParent) => {
-                try {
-                    // Try multiple methods to get parent/folder information
-                    const parentInfo = {
-                        itemParent: item.parent || null,
-                        displayedFolder: Office.context.mailbox.displayedFolder || null,
-                        itemId: item.itemId || 'Unknown',
-                        itemClass: item.itemClass || 'Unknown'
-                    };
-                    console.log('Parent folder info gathered:', parentInfo);
-                    resolveParent(parentInfo);
-                } catch (error) {
-                    console.warn('Failed to get parent folder:', error);
-                    resolveParent({ itemParent: null, displayedFolder: null, itemId: 'Error', itemClass: 'Error' });
                 }
             });
         };
@@ -120,7 +100,7 @@ export class EmailAnalyzer {
                                      !item.internetMessageId && 
                                      !item.dateTimeCreated;
                 
-                console.debug('Compose mode detection details:', {
+                console.debug('[VERBOSE] - Compose mode detection details:', {
                     itemType: item.itemType,
                     itemClass: item.itemClass, 
                     internetMessageId: !!item.internetMessageId,
@@ -132,23 +112,23 @@ export class EmailAnalyzer {
                 
                 if (isComposeMode) {
                     // In compose mode (including replies), don't show a sent date
-                    console.debug('In compose mode, using null date');
+                    console.debug('[VERBOSE] - In compose mode, using null date');
                     resolveDate(null);
                 } else if (item.itemType === Office.MailboxEnums.ItemType.Message) {
                     // This should be a received email - use dateTimeCreated
                     const emailDate = item.dateTimeCreated ? new Date(item.dateTimeCreated) : new Date();
-                    console.debug('Using email date for received message:', emailDate);
+                    console.debug('[VERBOSE] - Using email date for received message:', emailDate);
                     resolveDate(emailDate);
                 } else {
                     // For other item types
-                    console.debug('Other item type, using null date');
+                    console.debug('[VERBOSE] - Other item type, using null date');
                     resolveDate(null);
                 }
             });
         };
 
         // Get email body and other properties
-        const [bodyText, fromValue, recipientsValue, subjectValue, dateValue, outlookVersion, parentInfo] = await Promise.all([
+        const [bodyText, fromValue, recipientsValue, subjectValue, dateValue, outlookVersion] = await Promise.all([
             new Promise((resolveBody, rejectBody) => {
                 item.body.getAsync(Office.CoercionType.Text, (result) => {
                     if (result.status === Office.AsyncResultStatus.Failed) {
@@ -162,29 +142,22 @@ export class EmailAnalyzer {
             getRecipientsAsync(),
             getSubjectAsync(),
             getDateAsync(),
-            getOutlookVersionAsync(),
-            getParentAsync()
+            getOutlookVersionAsync()
         ]);
 
-        console.log('Async property results:', {
+        console.info('[INFO] - Async property gathering results:', {
             subject: subjectValue,
             from: fromValue,
             recipients: recipientsValue,
             date: dateValue,
             itemType: item.itemType,
-            outlookVersion: outlookVersion,
-            parent: parentInfo
+            outlookVersion: outlookVersion
         });
 
         const userProfile = Office.context.mailbox.userProfile;
         
         // Log user profile properties for future use
-        console.log('User Profile Properties:');
-        console.log('Full userProfile object:', userProfile);
-        console.log("User:", userProfile?.displayName || 'Not available');
-        console.log("Email:", userProfile?.emailAddress || 'Not available');
-        console.log("Time Zone:", userProfile?.timeZone || 'Not available');
-        console.log("Account Type:", userProfile?.accountType || 'Not available');
+        console.info('[INFO] - Full userProfile object:', userProfile);
         
         // Check if this is a reply after we have the subject
         const subjectStr = this.getSubjectString({ subject: subjectValue });
@@ -214,7 +187,7 @@ export class EmailAnalyzer {
             context: contextInfo
         };
 
-        console.log('Final processed email data:', emailData);
+        console.info('[INFO] - Final processed email data:', emailData);
         return emailData;
     }
 
@@ -246,71 +219,16 @@ export class EmailAnalyzer {
 
             if (isComposeMode) {
                 context.folderType = 'compose';
-                console.log('Detected compose mode:', context);
+                console.info('[INFO] - Detected compose mode:', context);
                 return context;
             }
 
-            // PRIMARY METHOD: Use folder information to determine context
-            let folderName = null;
-            try {
-                console.log('Attempting to get folder information...');
-                console.log('Office.context.mailbox.item.parent:', Office.context.mailbox.item.parent);
-                console.log('Office.context.mailbox.displayedFolder:', Office.context.mailbox.displayedFolder);
-                
-                // Try multiple ways to get folder information
-                if (Office.context.mailbox.item.parent) {
-                    folderName = Office.context.mailbox.item.parent.displayName;
-                    console.log('Got folder name from item.parent:', folderName);
-                } else if (Office.context.mailbox.displayedFolder) {
-                    folderName = Office.context.mailbox.displayedFolder.displayName;
-                    console.log('Got folder name from displayedFolder:', folderName);
-                } else {
-                    console.log('No folder information available from either method');
-                }
-                
-                if (folderName) {
-                    const folderLower = folderName.toLowerCase();
-                    context.debugInfo.folderName = folderName;
-                    
-                    console.log('Found folder name:', folderName, 'lowercase:', folderLower);
-                    
-                    // Check for sent items folder
-                    if (folderLower.includes('sent') || folderLower.includes('outbox') || 
-                        folderLower.includes('enviados') || folderLower.includes('gesendet')) {
-                        context.isSentMail = true;
-                        context.folderType = 'sent';
-                        context.isInbox = false;
-                        console.log('Folder indicates SENT MAIL:', folderName);
-                        return context;
-                    }
-                    
-                    // Check for inbox folder
-                    if (folderLower.includes('inbox') || folderLower.includes('posteingang') || 
-                        folderLower.includes('recibidos') || folderLower.includes('boîte de réception')) {
-                        context.isSentMail = false;
-                        context.folderType = 'inbox';
-                        context.isInbox = true;
-                        console.log('Folder indicates INBOX:', folderName);
-                        return context;
-                    }
-                    
-                    // For other folders, fall through to secondary detection
-                    console.log('Unknown folder type, using secondary detection:', folderName);
-                } else {
-                    console.log('No folder name found, falling back to email comparison');
-                }
-            } catch (folderError) {
-                console.warn('Could not access folder information:', folderError);
-                context.debugInfo.folderError = folderError.message;
-            }
-
-            // SECONDARY METHOD: Email address comparison (only if folder detection failed)
-            // Re-enabled with more careful logic for sent mail detection
+            // PRIMARY METHOD: Email address comparison for context detection
             if (fromValue?.emailAddress) {
                 context.senderEmail = fromValue.emailAddress.toLowerCase();
                 context.debugInfo.fromValue = fromValue;
                 
-                console.log('Email comparison data:', {
+                console.info('[INFO] - Email comparison data:', {
                     userEmail: context.userEmail,
                     senderEmail: context.senderEmail,
                     userProfile: userProfile
@@ -324,7 +242,7 @@ export class EmailAnalyzer {
                         match: isUserSender
                     };
                     
-                    console.log('Email comparison result:', {
+                    console.info('[INFO] - Email comparison result:', {
                         isUserSender,
                         userEmail: context.userEmail,
                         senderEmail: context.senderEmail
@@ -334,24 +252,24 @@ export class EmailAnalyzer {
                         context.isSentMail = true;
                         context.folderType = 'sent';
                         context.isInbox = false;
-                        console.log('Email comparison indicates SENT MAIL - user is sender');
+                        console.info('[INFO] - Email comparison indicates SENT MAIL - user is sender');
                         return context;
                     }
                 }
             }
 
-            // DEFAULT: If we can't determine definitively from folder, assume inbox
+            // DEFAULT: If we can't determine definitively from email comparison, assume inbox
             context.isSentMail = false;
             context.isInbox = true;
             context.folderType = 'inbox';
             context.debugInfo.usedDefault = true;
-            context.debugInfo.reason = 'No definitive folder information available, defaulting to inbox';
+            context.debugInfo.reason = 'No definitive email comparison match available, defaulting to inbox';
             
-            console.log('Using default INBOX detection (folder detection failed):', context);
+            console.info('[INFO] - Using default INBOX detection (email comparison inconclusive):', context);
             return context;
 
         } catch (error) {
-            console.error('Error detecting email context:', error);
+            console.error('[ERROR] - Error detecting email context:', error);
             return {
                 isSentMail: false,
                 isInbox: true,
@@ -371,7 +289,6 @@ export class EmailAnalyzer {
      * @returns {string} Sender email address
      */
     getFromAddressFromValue(fromValue, item) {
-        console.log('Processing sender email address from async value:', fromValue);
         
         if (fromValue) {
             const displayName = (fromValue.displayName !== undefined) ? String(fromValue.displayName) : 'Unknown';
@@ -401,7 +318,6 @@ export class EmailAnalyzer {
      * @returns {string} Formatted recipients string
      */
     getRecipientsFromValue(recipientsValue) {
-        console.log('Processing recipients from async values:', recipientsValue);
         
         const recipients = [];
         
@@ -432,11 +348,11 @@ export class EmailAnalyzer {
                 recipients.push('BCC: ' + bccRecipients.join(', '));
             }
         } catch (error) {
-            console.error('Error processing recipients value:', error);
+            console.error('[ERROR] - Error processing recipients value:', error);
         }
 
         const result = recipients.join('; ') || 'No recipients';
-        console.log('Final recipients string:', result);
+
         return result;
     }
 
@@ -446,13 +362,13 @@ export class EmailAnalyzer {
      * @returns {string} Subject string
      */
     getSubjectString(item) {
-        console.log('Processing subject:', item.subject, typeof item.subject);
+        console.info('[INFO] - Processing mail object with subject:', item.subject, typeof item.subject);
         
         if (!item.subject) return 'No Subject';
         
         // Handle case where subject might be an object
         if (typeof item.subject === 'object') {
-            console.log('Subject is object:', item.subject);
+            console.info('[INFO] - Subject is object:', item.subject);
             // If it has a value property, use that
             if (item.subject && item.subject.value !== undefined) return String(item.subject.value);
             // If it has a text property, use that
@@ -467,7 +383,7 @@ export class EmailAnalyzer {
                 const jsonString = JSON.stringify(item.subject);
                 if (jsonString && jsonString !== '{}') return jsonString;
             } catch (e) {
-                console.warn('Failed to stringify subject:', e);
+                console.warn('[WARN] - Failed to stringify subject:', e);
             }
             // Otherwise return empty string
             return 'No Subject';
@@ -482,7 +398,7 @@ export class EmailAnalyzer {
      * @returns {string} Sender email address
      */
     getFromAddress(item) {
-        console.log('Processing from address:', {
+        console.info('[INFO] - Processing from address:', {
             itemType: item.itemType,
             from: item.from,
             messageType: Office.MailboxEnums.ItemType.Message,
@@ -493,7 +409,7 @@ export class EmailAnalyzer {
         if (item.itemType === Office.MailboxEnums.ItemType.Message) {
             // For received messages in read mode
             if (item.from) {
-                console.log('From object:', item.from);
+                console.info('[INFO] - From object:', item.from);
                 const displayName = (item.from.displayName !== undefined) ? String(item.from.displayName) : 'Unknown';
                 const emailAddress = (item.from.emailAddress !== undefined) ? String(item.from.emailAddress) : 'unknown@domain.com';
                 return `${displayName} <${emailAddress}>`;
@@ -501,7 +417,7 @@ export class EmailAnalyzer {
             
             // Fallback: try to get sender from internetMessageId or other properties
             if (item.sender) {
-                console.log('Using sender property:', item.sender);
+                console.info('[INFO] - Using sender property:', item.sender);
                 const displayName = (item.sender.displayName !== undefined) ? String(item.sender.displayName) : 'Unknown';
                 const emailAddress = (item.sender.emailAddress !== undefined) ? String(item.sender.emailAddress) : 'unknown@domain.com';
                 return `${displayName} <${emailAddress}>`;
@@ -511,7 +427,7 @@ export class EmailAnalyzer {
         } else {
             // For compose items, return current user
             const userProfile = Office.context.mailbox.userProfile;
-            console.log('User profile:', userProfile);
+            console.info('[INFO] - User profile:', userProfile);
             if (userProfile) {
                 const displayName = userProfile.displayName || 'Unknown';
                 const emailAddress = userProfile.emailAddress || 'unknown@domain.com';
@@ -528,7 +444,7 @@ export class EmailAnalyzer {
      * @returns {string} Formatted recipients string
      */
     getRecipients(item) {
-        console.log('Processing recipients:', {
+        console.info('[INFO] - Processing recipients:', {
             to: item.to,
             cc: item.cc,
             bcc: item.bcc
@@ -563,11 +479,11 @@ export class EmailAnalyzer {
                 recipients.push('BCC: ' + bccRecipients.join(', '));
             }
         } catch (error) {
-            console.error('Error processing recipients:', error);
+            console.error('[ERROR] - Error processing recipients:', error);
         }
 
         const result = recipients.join('; ') || 'No recipients';
-        console.log('Processed recipients:', result);
+        console.info('[INFO] - Processed recipients:', result);
         return result;
     }
 

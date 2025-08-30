@@ -7,7 +7,7 @@ const url = require('url');
  * Handles CORS and credential management
  */
 exports.handler = async (event) => {
-    console.log('Received event:', JSON.stringify(event, null, 2));
+    console.info('[INFO] - Received event:', JSON.stringify(event, null, 2));
     
     const allowedOrigin = process.env.ALLOWED_ORIGIN || '*';
     const corsHeaders = {
@@ -20,19 +20,19 @@ exports.handler = async (event) => {
     try {
         // Handle preflight CORS requests
         if (event.httpMethod === 'OPTIONS') {
-            console.log('Handling CORS preflight request');
+            console.info('[INFO] - Handling CORS preflight request');
             return createResponse(200, { message: 'CORS preflight handled' }, corsHeaders);
         }
         
         // Only allow POST requests for telemetry
         if (event.httpMethod !== 'POST') {
-            console.log('Method not allowed:', event.httpMethod);
+            console.info('[INFO] - Method not allowed:', event.httpMethod);
             return createResponse(405, { error: 'Method not allowed' }, corsHeaders);
         }
         
         // Validate required environment variables
         if (!process.env.SPLUNK_HEC_TOKEN || !process.env.SPLUNK_HEC_URL) {
-            console.error('Missing required environment variables');
+            console.error('[ERROR] - Missing required environment variables');
             return createResponse(500, { error: 'Service configuration error' }, corsHeaders);
         }
         
@@ -75,18 +75,18 @@ exports.handler = async (event) => {
             requestData = parsedEvents.map(event => JSON.stringify(event)).join('\n');
             
         } catch (parseError) {
-            console.error('Invalid JSON in request body:', parseError);
+            console.error('[ERROR] - Invalid JSON in request body:', parseError);
             return createResponse(400, { error: 'Invalid JSON in request body' }, corsHeaders);
         }
         
         // Forward to Splunk
         const splunkResponse = await forwardToSplunk(requestData);
         
-        console.log('Splunk response status:', splunkResponse.statusCode);
+        console.info('[INFO] - Splunk response status:', splunkResponse.statusCode);
         return createResponse(splunkResponse.statusCode, splunkResponse.body, corsHeaders);
         
     } catch (error) {
-        console.error('Handler error:', error);
+        console.error('[ERROR] - Handler error:', error);
         return createResponse(500, { 
             error: 'Internal server error',
             message: error.message 
@@ -109,7 +109,7 @@ async function forwardToSplunk(data) {
                 splunkUrl.pathname = '/services/collector/event';
             }
             
-            console.log('Forwarding to Splunk:', splunkUrl.href);
+            console.info('[INFO] - Forwarding to Splunk:', splunkUrl.href);
             
             const options = {
                 hostname: splunkUrl.hostname,
@@ -136,7 +136,7 @@ async function forwardToSplunk(data) {
                 });
                 
                 res.on('end', () => {
-                    console.log(`Splunk response: ${res.statusCode} - ${responseBody}`);
+                    console.info(`[INFO] - Splunk response: ${res.statusCode} - ${responseBody}`);
                     
                     let parsedBody;
                     try {
@@ -153,12 +153,12 @@ async function forwardToSplunk(data) {
             });
             
             req.on('error', (error) => {
-                console.error('Request to Splunk failed:', error);
+                console.error('[ERROR] - Request to Splunk failed:', error);
                 reject(new Error(`Splunk request failed: ${error.message}`));
             });
             
             req.on('timeout', () => {
-                console.error('Request to Splunk timed out');
+                console.error('[ERROR] - Request to Splunk timed out');
                 req.destroy();
                 reject(new Error('Request to Splunk timed out'));
             });
@@ -171,7 +171,7 @@ async function forwardToSplunk(data) {
             req.end();
             
         } catch (error) {
-            console.error('Error setting up Splunk request:', error);
+            console.error('[ERROR] - Error setting up Splunk request:', error);
             reject(error);
         }
     });

@@ -9,10 +9,5 @@
       "batchSize": 10,
       "flushInterval": 1000
     }
-  },
-  "metadata": {
-    "application": "Outlook Email Assistant",
-    "component": "TaskPane",
-    "lastUpdated": "2025-08-12"
   }
 }

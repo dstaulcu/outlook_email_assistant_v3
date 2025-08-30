@@ -14,10 +14,6 @@ export class Logger {
         this.maxRetries = 3;
         this.apiGatewayConnectionError = false;
         
-        // Add unique instance ID for debugging
-        this.instanceId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-        console.debug('Logger instance created:', this.instanceId);
-        
         // Initialize telemetry configuration
         this.initializeTelemetryConfig();
     }
@@ -27,17 +23,17 @@ export class Logger {
      */
     async initializeTelemetryConfig() {
         try {
-            console.debug('Loading telemetry configuration... (instance:', this.instanceId, ')');
+            console.debug('[VERBOSE] - Loading telemetry configuration...');
             const response = await fetch('/config/telemetry.json');
             if (response.ok) {
                 this.telemetryConfig = await response.json();
-                console.info('Telemetry configuration loaded (instance:', this.instanceId, '):', this.telemetryConfig);
+                console.info('[INFO] - Telemetry configuration loaded:', this.telemetryConfig);
             } else {
-                console.warn('Could not load telemetry configuration, using defaults');
+                console.warn('[WARN] - Could not load telemetry configuration, using defaults');
                 this.telemetryConfig = this.getDefaultTelemetryConfig();
             }
         } catch (error) {
-            console.error('Failed to load telemetry configuration:', error);
+            console.error('[ERROR] - Failed to load telemetry configuration:', error);
             this.telemetryConfig = this.getDefaultTelemetryConfig();
         }
     }
@@ -64,7 +60,7 @@ export class Logger {
      */
     async logEvent(eventType, data = {}, level = 'Information', contextEmail = null) {
         if (!this.isEnabled) {
-            console.debug('Logging disabled:', eventType, data);
+            console.debug('[VERBOSE] - Logging disabled:', eventType, data);
             return;
         }
 
@@ -72,7 +68,7 @@ export class Logger {
             const logEntry = this.createLogEntry(eventType, data, contextEmail);
             
             // Always log to console for development/debugging
-            console.debug(`[${level}] ${eventType}:`, logEntry);
+            console.debug(`[VERBOSE] - ${level} ${eventType}:`, logEntry);
 
             // Add to telemetry queue if enabled
             if (this.telemetryConfig?.telemetry?.enabled) {
@@ -82,7 +78,7 @@ export class Logger {
             }
 
         } catch (error) {
-            console.error('Failed to log event:', error);
+            console.error('[ERROR] - Failed to log event:', error);
         }
     }
 
@@ -186,7 +182,7 @@ export class Logger {
                 }
             }
         } catch (error) {
-            console.debug('Could not retrieve Office user profile:', error);
+            console.debug('[VERBOSE] - Could not retrieve Office user profile:', error);
         }
 
         // Fallback: Check if we have cached user context
@@ -288,7 +284,7 @@ export class Logger {
             // IP address would need to be obtained server-side (e.g., from API Gateway logs)
             
         } catch (error) {
-            console.debug('Error getting client context:', error);
+            console.debug('[VERBOSE] - Error getting client context:', error);
             clientContext.error = error.message;
         }
 
@@ -353,7 +349,7 @@ export class Logger {
             }
 
         } catch (error) {
-            console.debug('Error getting environment context:', error);
+            console.debug('[VERBOSE] - Error getting environment context:', error);
             envContext.error = error.message;
         }
 
@@ -486,7 +482,7 @@ export class Logger {
             }
 
         } catch (error) {
-            console.debug('Error getting Office diagnostics:', error);
+            console.debug('[VERBOSE] - Error getting Office diagnostics:', error);
             diagnostics.error = error.message;
         }
 
@@ -528,7 +524,7 @@ export class Logger {
      */
     async logToApiGateway(eventType, logEntry, level) {
         try {
-            console.debug('Preparing API Gateway event:', logEntry);
+            console.debug('[VERBOSE] - Preparing API Gateway event:', logEntry);
             
             const environmentContext = this.getEnvironmentContext();
             
@@ -558,18 +554,18 @@ export class Logger {
             
             // Queue management - prevent unlimited growth
             if (this.apiGatewayQueue.length > 1000) {
-                console.warn('[Logger] Queue size exceeded 1000 events, removing oldest entries');
+                console.warn('[WARN] - Logger queue size exceeded 1000 events, removing oldest entries');
                 this.apiGatewayQueue = this.apiGatewayQueue.slice(-500);
             }
             
-            console.debug('[Logger] Event queued for API Gateway, queue size:', this.apiGatewayQueue.length);
+            console.debug('[VERBOSE] Event queued for API Gateway, queue size:', this.apiGatewayQueue.length);
             
             // Auto-flush if queue is large
             if (this.apiGatewayQueue.length >= 10) {
                 await this.flushApiGatewayQueue();
             }
         } catch (error) {
-            console.error('Error adding event to API Gateway queue:', error);
+            console.error('[ERROR] - Error adding event to API Gateway queue:', error);
         }
     }
 
@@ -585,7 +581,7 @@ export class Logger {
         try {
             const apiGatewayConfig = this.telemetryConfig.telemetry.api_gateway;
 
-            console.debug(`[Logger] Flushing ${events.length} events to API Gateway`);
+            console.debug(`[VERBOSE] - Flushing ${events.length} events to API Gateway`);
 
             const fetchOptions = {
                 method: 'POST',
@@ -595,18 +591,18 @@ export class Logger {
                 body: events.map(event => JSON.stringify(event)).join('\n')
             };
 
-            console.debug(`[Logger] Attempting to send to: ${apiGatewayConfig.endpoint}`);
+            console.debug(`[VERBOSE] - Attempting to send to: ${apiGatewayConfig.endpoint}`);
             
             const response = await fetch(apiGatewayConfig.endpoint, fetchOptions);
 
-            console.debug(`[Logger] Response status: ${response.status} ${response.statusText}`);
+            console.debug(`[VERBOSE] - Response status: ${response.status} ${response.statusText}`);
 
             if (response.ok) {
-                console.info('Successfully sent events to API Gateway');
+                console.info('[INFO] - Successfully sent events to API Gateway');
                 this.apiGatewayConnectionError = false;
                 this.apiGatewayRetryCount = 0;
                 const result = await response.json();
-                console.debug('API Gateway response:', result);
+                console.debug('[VERBOSE] - API Gateway response:', result);
             } else {
                 // Only retry on transient errors (5xx, 429), not on 400/401/403
                 const status = response.status;
@@ -615,22 +611,22 @@ export class Logger {
                     this.apiGatewayRetryCount++;
                     const backoff = Math.min(1000 * Math.pow(2, this.apiGatewayRetryCount - 1), 8000);
                     if (this.apiGatewayRetryCount <= this.maxRetries) {
-                        console.warn(`Transient error (${status}). Retrying in ${backoff}ms (attempt ${this.apiGatewayRetryCount}/${this.maxRetries})`);
+                        console.warn(`[WARN] - Transient error (${status}). Retrying in ${backoff}ms (attempt ${this.apiGatewayRetryCount}/${this.maxRetries})`);
                         setTimeout(() => {
                             this.apiGatewayQueue.unshift(...events);
                             this.flushApiGatewayQueue();
                         }, backoff);
                     } else {
-                        console.error('Max API Gateway retry attempts reached, dropping events');
+                        console.error('[ERROR] - Max API Gateway retry attempts reached, dropping events');
                         this.apiGatewayRetryCount = 0;
                     }
                 } else {
-                    console.error(`Permanent error from API Gateway (${status}). Dropping events and not retrying.`);
+                    console.error(`[ERROR] - Permanent error from API Gateway (${status}). Dropping events and not retrying.`);
                     this.apiGatewayRetryCount = 0;
                 }
             }
         } catch (error) {
-            console.debug(`[Logger] API Gateway error details:`, {
+            console.debug(`[VERBOSE] - Logger API Gateway error details:`, {
                 message: error.message,
                 name: error.name,
                 stack: error.stack?.substring(0, 200)
@@ -638,7 +634,7 @@ export class Logger {
             
             if (error.message.includes('fetch') || error.message.includes('NetworkError')) {
                 if (!this.apiGatewayConnectionError) {
-                    console.warn('API Gateway connection unavailable, events will be queued');
+                    console.warn('[WARN] - API Gateway connection unavailable, events will be queued');
                     this.apiGatewayConnectionError = true;
                 }
                 this.apiGatewayRetryCount++;
@@ -649,11 +645,11 @@ export class Logger {
                         this.flushApiGatewayQueue();
                     }, backoff);
                 } else {
-                    console.error('Max API Gateway retry attempts reached (network error), dropping events');
+                    console.error('[ERROR] - Max API Gateway retry attempts reached (network error), dropping events');
                     this.apiGatewayRetryCount = 0;
                 }
             } else {
-                console.error('Error flushing API Gateway queue:', error);
+                console.error('[ERROR] - Error flushing API Gateway queue:', error);
                 this.apiGatewayRetryCount = 0;
             }
         }
@@ -673,7 +669,7 @@ export class Logger {
             }
         }, flushInterval);
 
-        console.log(`Started API Gateway logging auto-flush with ${flushInterval}ms interval`);
+        console.info(`[INFO] - Started API Gateway logging auto-flush with ${flushInterval}ms interval`);
     }
 
     /**
@@ -683,7 +679,7 @@ export class Logger {
         if (this.apiGatewayFlushInterval) {
             clearInterval(this.apiGatewayFlushInterval);
             this.apiGatewayFlushInterval = null;
-            console.debug('Stopped logging auto-flush');
+            console.debug('[VERBOSE] - Stopped logging auto-flush');
         }
     }
 
@@ -714,28 +710,11 @@ export class Logger {
             email_length: metrics.emailLength,
             response_length: metrics.responseLength,
             model_used: metrics.model,
-            classification: metrics.classification,
             tokens_used: metrics.tokensUsed || 0,
             error_occurred: metrics.errorOccurred || false
         };
 
         await this.logEvent('processing_metrics', telemetryData);
-    }
-
-    /**
-     * Logs security events
-     * @param {string} eventType - Type of security event
-     * @param {Object} details - Security event details
-     */
-    async logSecurityEvent(eventType, details) {
-        const securityData = {
-            security_event_type: eventType,
-            action_taken: details.actionTaken,
-            user_override: details.userOverride || false,
-            compliance_note: 'User proceeded despite classification warning'
-        };
-
-        await this.logEvent('security_event', securityData, 'Warning');
     }
 
     /**

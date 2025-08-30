@@ -36,7 +36,6 @@ $testData2 = @{
     event = @{
         eventType = "email_analysis_test"
         emailSubject = "TEST: API Gateway Integration"
-        classification = "UNCLASSIFIED"
         provider = "onsite1"
         analysisType = "test_simulation"
         duration = 1250

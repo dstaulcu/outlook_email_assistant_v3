@@ -11,7 +11,7 @@ Write-Host "Creating mock Lambda function for testing..." -ForegroundColor Yello
 # Create a mock Lambda function code
 $mockLambdaCode = @"
 exports.handler = async (event) => {
-    console.log('Mock handler - Event:', JSON.stringify(event, null, 2));
+    console.info('[INFO] - Mock handler - Event:', JSON.stringify(event, null, 2));
     
     const allowedOrigin = process.env.ALLOWED_ORIGIN || '*';
     const corsHeaders = {

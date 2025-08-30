@@ -2,7 +2,7 @@
 // This handles function commands that can be triggered from the ribbon
 
 Office.onReady(() => {
-    console.log('PromptEmail commands ready');
+    console.info('[INFO] - PromptEmail commands ready');
 });
 
 // Register command functions

@@ -44,7 +44,7 @@ export class SettingsManager {
         
         // Add unique instance ID for debugging
         this.instanceId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-        console.debug('SettingsManager instance created:', this.instanceId);
+        console.debug('[VERBOSE] - SettingsManager instance created:', this.instanceId);
     }
 
     /**
@@ -52,58 +52,58 @@ export class SettingsManager {
      * @returns {Promise<Object>} Loaded settings
      */
     async loadSettings() {
-        console.debug('Starting settings load process...');
+        console.debug('[VERBOSE] - Starting settings load process...');
         try {
-            console.debug('Attempting to load from Office storage...');
+            console.debug('[VERBOSE] - Attempting to load from Office storage...');
             // Try Office.js RoamingSettings first
             const officeSettings = await this.loadFromOfficeStorage();
             if (officeSettings) {
-                console.debug('Successfully loaded from Office storage:', officeSettings);
+                console.debug('[VERBOSE] - Successfully loaded from Office storage:', officeSettings);
                 this.settings = { ...this.defaultSettings, ...officeSettings };
-                console.debug('Merged settings with defaults:', this.settings);
+                console.debug('[VERBOSE] - Merged settings with defaults:', this.settings);
                 
                 // Migrate legacy settings if needed
                 const migrated = this.migrateLegacySettings();
                 if (migrated) {
                     await this.saveSettings(this.settings);
-                    console.debug('Legacy settings migrated and saved');
+                    console.debug('[VERBOSE] - Legacy settings migrated and saved');
                 }
                 
                 return this.settings;
             }
-            console.warn('No Office storage settings found, trying localStorage...');
+            console.warn('[WARN] - No Office storage settings found, trying localStorage...');
 
             // Fallback to localStorage
             const localSettings = this.loadFromLocalStorage();
             if (localSettings) {
-                console.debug('Successfully loaded from localStorage:', localSettings);
+                console.debug('[VERBOSE] - Successfully loaded from localStorage:', localSettings);
                 this.settings = { ...this.defaultSettings, ...localSettings };
-                console.debug('Merged settings with defaults:', this.settings);
+                console.debug('[VERBOSE] - Merged settings with defaults:', this.settings);
                 
                 // Migrate legacy settings if needed
                 const migrated = this.migrateLegacySettings();
                 if (migrated) {
                     await this.saveSettings(this.settings);
-                    console.debug('Legacy settings migrated and saved');
+                    console.debug('[VERBOSE] - Legacy settings migrated and saved');
                 }
                 
                 return this.settings;
             }
-            console.debug('No localStorage settings found, using defaults...');
+            console.debug('[VERBOSE] - No localStorage settings found, using defaults...');
 
             // No stored settings found, use defaults
             this.settings = { ...this.defaultSettings };
-            console.debug('Using default settings:', this.settings);
+            console.debug('[VERBOSE] - Using default settings:', this.settings);
             await this.saveSettings(this.settings);
-            console.debug('Default settings saved successfully');
+            console.debug('[VERBOSE] - Default settings saved successfully');
             
             return this.settings;
 
         } catch (error) {
-            console.error('Failed to load settings:', error);
-            console.debug('Falling back to default settings due to error');
+            console.error('[ERROR] - Failed to load settings:', error);
+            console.debug('[VERBOSE] - Falling back to default settings due to error');
             this.settings = { ...this.defaultSettings };
-            console.debug('Using default settings after error:', this.settings);
+            console.debug('[VERBOSE] - Using default settings after error:', this.settings);
             return this.settings;
         }
     }
@@ -114,39 +114,39 @@ export class SettingsManager {
      * @returns {Promise<boolean>} Success status
      */
     async saveSettings(newSettings = null) {
-        console.debug('Starting settings save process...');
-        console.debug('Settings to save:', newSettings || this.settings);
+        console.debug('[VERBOSE] - Starting settings save process...');
+        console.debug('[VERBOSE] - Settings to save:', newSettings || this.settings);
         try {
             const settingsToSave = newSettings || this.settings;
             
             // Update timestamp
             settingsToSave['last-updated'] = new Date().toISOString();
-            console.debug('Added timestamp:', settingsToSave['last-updated']);
+            console.debug('[VERBOSE] - Added timestamp:', settingsToSave['last-updated']);
             
             // Update internal settings
             this.settings = { ...settingsToSave };
-            console.debug('Updated internal settings cache');
+            console.debug('[VERBOSE] - Updated internal settings cache');
 
             // Save to Office.js RoamingSettings
-            console.debug('Attempting to save to Office storage...');
+            console.debug('[VERBOSE] - Attempting to save to Office storage...');
             const officeSaved = await this.saveToOfficeStorage(settingsToSave);
-            console.debug(`[SettingsManager] Office storage save result: ${officeSaved ? 'SUCCESS' : 'FAILED'}`);
+            console.debug(`[VERBOSE] - Office storage save result: ${officeSaved ? 'SUCCESS' : 'FAILED'}`);
             
             // Also save to localStorage as backup
-            console.debug('Saving to localStorage as backup...');
+            console.debug('[VERBOSE] - Saving to localStorage as backup...');
             this.saveToLocalStorage(settingsToSave);
-            console.debug('localStorage backup save completed');
+            console.debug('[VERBOSE] - localStorage backup save completed');
 
             // Notify listeners
-            console.debug('Notifying change listeners...');
+            console.debug('[VERBOSE] - Notifying change listeners...');
             this.notifyChangeListeners(settingsToSave);
-            console.debug(`[SettingsManager] Notified ${this.changeListeners.length} listeners`);
+            console.debug(`[VERBOSE] - Notified ${this.changeListeners.length} listeners`);
 
             return officeSaved;
 
         } catch (error) {
-            console.error('Failed to save settings:', error);
-            console.log('Save operation failed, returning false');
+            console.error('[ERROR] - Failed to save settings:', error);
+            console.info('[INFO] - Save operation failed, returning false');
             return false;
         }
     }
@@ -156,31 +156,31 @@ export class SettingsManager {
      * @returns {Promise<Object|null>} Settings object or null
      */
     async loadFromOfficeStorage() {
-        console.debug('Loading from Office.js RoamingSettings...');
+        console.debug('[VERBOSE] - Loading from Office.js RoamingSettings...');
         return new Promise((resolve) => {
             try {
                 if (typeof Office === 'undefined' || !Office.context?.roamingSettings) {
-                    console.warn('Office.js or RoamingSettings not available');
+                    console.warn('[WARN] - Office.js or RoamingSettings not available');
                     resolve(null);
                     return;
                 }
 
                 const roamingSettings = Office.context.roamingSettings;
-                console.debug('RoamingSettings object available');
+                console.debug('[VERBOSE] - RoamingSettings object available');
                 const settingsJson = roamingSettings.get(this.storageKey);
-                console.debug('Raw settings from Office storage:', settingsJson);
+                console.debug('[VERBOSE] - Raw settings from Office storage:', settingsJson);
                 
                 if (settingsJson) {
                     const settings = JSON.parse(settingsJson);
-                    console.debug('Parsed Office settings:', settings);
+                    console.debug('[VERBOSE] - Parsed Office settings:', settings);
                     resolve(settings);
                 } else {
-                    console.debug('No settings found in Office storage');
+                    console.debug('[VERBOSE] - No settings found in Office storage');
                     resolve(null);
                 }
 
             } catch (error) {
-                console.error('Failed to load from Office storage:', error);
+                console.error('[ERROR] - Failed to load from Office storage:', error);
                 resolve(null);
             }
         });
@@ -192,38 +192,38 @@ export class SettingsManager {
      * @returns {Promise<boolean>} Success status
      */
     async saveToOfficeStorage(settings) {
-        console.debug('Saving to Office.js RoamingSettings...');
-        console.debug('Settings to serialize:', settings);
+        console.debug('[VERBOSE] - Saving to Office.js RoamingSettings...');
+        console.debug('[VERBOSE] - Settings to serialize:', settings);
         return new Promise((resolve) => {
             try {
                 if (typeof Office === 'undefined' || !Office.context?.roamingSettings) {
-                    console.warn('Office.js or RoamingSettings not available for save');
+                    console.warn('[WARN] - Office.js or RoamingSettings not available for save');
                     resolve(false);
                     return;
                 }
 
                 const roamingSettings = Office.context.roamingSettings;
-                console.debug('RoamingSettings object available for save');
+                console.debug('[VERBOSE] - RoamingSettings object available for save');
                 const settingsJson = JSON.stringify(settings);
-                console.debug('Serialized settings JSON:', settingsJson);
+                console.debug('[VERBOSE] - Serialized settings JSON:', settingsJson);
                 
                 roamingSettings.set(this.storageKey, settingsJson);
-                console.debug('Settings data set in RoamingSettings');
+                console.debug('[VERBOSE] - Settings data set in RoamingSettings');
                 
                 // Save settings asynchronously
-                console.debug('Initiating async save to Office...');
+                console.debug('[VERBOSE] - Initiating async save to Office...');
                 roamingSettings.saveAsync((result) => {
                     if (result.status === Office.AsyncResultStatus.Succeeded) {
-                        console.debug('Office storage save succeeded');
+                        console.debug('[VERBOSE] - Office storage save succeeded');
                         resolve(true);
                     } else {
-                        console.error('Failed to save to Office storage:', result.error);
+                        console.error('[ERROR] - Failed to save to Office storage:', result.error);
                         resolve(false);
                     }
                 });
 
             } catch (error) {
-                console.error('Error saving to Office storage:', error);
+                console.error('[ERROR] - Error saving to Office storage:', error);
                 resolve(false);
             }
         });
@@ -234,26 +234,26 @@ export class SettingsManager {
      * @returns {Object|null} Settings object or null
      */
     loadFromLocalStorage() {
-        console.debug('Loading from localStorage...');
+        console.debug('[VERBOSE] - Loading from localStorage...');
         try {
             if (typeof localStorage === 'undefined') {
-                console.warn('localStorage not available');
+                console.warn('[WARN] - localStorage not available');
                 return null;
             }
 
             const settingsJson = localStorage.getItem(this.storageKey);
-            console.debug('Raw localStorage data:', settingsJson);
+            console.debug('[VERBOSE] - Raw localStorage data:', settingsJson);
             if (settingsJson) {
                 const settings = JSON.parse(settingsJson);
-                console.debug('Parsed localStorage settings:', settings);
+                console.debug('[VERBOSE] - Parsed localStorage settings:', settings);
                 return settings;
             }
             
-            console.debug('No settings found in localStorage');
+            console.debug('[VERBOSE] - No settings found in localStorage');
             return null;
 
         } catch (error) {
-            console.error('Failed to load from localStorage:', error);
+            console.error('[ERROR] - Failed to load from localStorage:', error);
             return null;
         }
     }
@@ -263,21 +263,21 @@ export class SettingsManager {
      * @param {Object} settings - Settings to save
      */
     saveToLocalStorage(settings) {
-        console.debug('Saving to localStorage...');
-        console.debug('Settings to save to localStorage:', settings);
+        console.debug('[VERBOSE] - Saving to localStorage...');
+        console.debug('[VERBOSE] - Settings to save to localStorage:', settings);
         try {
             if (typeof localStorage === 'undefined') {
-                console.warn('localStorage not available for save');
+                console.warn('[WARN] - localStorage not available for save');
                 return;
             }
 
             const settingsJson = JSON.stringify(settings);
-            console.debug('Serialized localStorage JSON:', settingsJson);
+            console.debug('[VERBOSE] - Serialized localStorage JSON:', settingsJson);
             localStorage.setItem(this.storageKey, settingsJson);
-            console.debug('localStorage save completed');
+            console.debug('[VERBOSE] - localStorage save completed');
 
         } catch (error) {
-            console.error('Failed to save to localStorage:', error);
+            console.error('[ERROR] - Failed to save to localStorage:', error);
         }
     }
 
@@ -289,7 +289,7 @@ export class SettingsManager {
      */
     getSetting(key, defaultValue = null) {
         const value = this.settings[key] !== undefined ? this.settings[key] : defaultValue;
-        console.log(`Getting setting '${key}':`, value);
+        console.info(`[INFO] - Getting setting '${key}':`, value);
         return value;
     }
 
@@ -300,10 +300,10 @@ export class SettingsManager {
      * @returns {Promise<boolean>} Success status
      */
     async setSetting(key, value) {
-        console.log(`Setting '${key}' to:`, value);
+        console.info(`[INFO] - Setting '${key}' to:`, value);
         this.settings[key] = value;
         const result = await this.saveSettings();
-        console.log(`Save result for '${key}':`, result);
+        console.info(`[INFO] - Save result for '${key}':`, result);
         return result;
     }
 
@@ -312,7 +312,7 @@ export class SettingsManager {
      * @returns {Object} All settings
      */
     getSettings() {
-        console.debug('Getting all settings (instance:', this.instanceId, '):', this.settings);
+        console.debug('[VERBOSE] - Getting all settings (instance:', this.instanceId, '):', this.settings);
         return { ...this.settings };
     }
 
@@ -364,7 +364,7 @@ export class SettingsManager {
             return await this.saveSettings(mergedSettings);
 
         } catch (error) {
-            console.error('Failed to import settings:', error);
+            console.error('[ERROR] - Failed to import settings:', error);
             return false;
         }
     }
@@ -387,7 +387,7 @@ export class SettingsManager {
                 if (typeof value === typeof defaultValue) {
                     validated[key] = value;
                 } else {
-                    console.warn(`Invalid type for setting '${key}', using default`);
+                    console.warn(`[WARN] - Invalid type for setting '${key}', using default`);
                     validated[key] = defaultValue;
                 }
             } else {
@@ -444,7 +444,7 @@ export class SettingsManager {
             try {
                 listener(newSettings);
             } catch (error) {
-                console.error('Settings change listener error:', error);
+                console.error('[ERROR] - Settings change listener error:', error);
             }
         });
     }
@@ -484,7 +484,7 @@ export class SettingsManager {
             return await this.saveSettings();
 
         } catch (error) {
-            console.error('Settings migration failed:', error);
+            console.error('[ERROR] - Settings migration failed:', error);
             return false;
         }
     }
@@ -518,7 +518,7 @@ export class SettingsManager {
             return true;
 
         } catch (error) {
-            console.error('Failed to clear settings:', error);
+            console.error('[ERROR] - Failed to clear settings:', error);
             return false;
         }
     }
@@ -572,7 +572,7 @@ export class SettingsManager {
             return await this.saveSettings(this.settings);
             
         } catch (error) {
-            console.error('Failed to set provider config:', error);
+            console.error('[ERROR] - Failed to set provider config:', error);
             return false;
         }
     }
@@ -587,7 +587,7 @@ export class SettingsManager {
             if ((this.settings['api-key'] || this.settings['endpoint-url']) && 
                 !this.settings['provider-configs']) {
                 
-                console.debug('Migrating legacy settings to provider-specific format');
+                console.debug('[VERBOSE] - Migrating legacy settings to provider-specific format');
                 
                 // Initialize provider configs
                 this.settings['provider-configs'] = { ...this.defaultSettings['provider-configs'] };
@@ -601,14 +601,14 @@ export class SettingsManager {
                     this.settings['provider-configs'][currentService]['endpoint-url'] = this.settings['endpoint-url'] || '';
                 }
                 
-                console.debug('Legacy settings migrated successfully');
+                console.debug('[VERBOSE] - Legacy settings migrated successfully');
                 return true;
             }
             
             return false; // No migration needed
             
         } catch (error) {
-            console.error('Failed to migrate legacy settings:', error);
+            console.error('[ERROR] - Failed to migrate legacy settings:', error);
             return false;
         }
     }

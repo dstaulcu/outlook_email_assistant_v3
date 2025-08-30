@@ -4,9 +4,8 @@ AI-Powered Email Analysis Outlook Add-in that enhances email productivity throug
 
 ## Features
 
-- **AI-Powered Email Analysis**: Intelligent email classification, tone detection, and response assistance
+- **AI-Powered Email Analysis**: Intelligent email analysis, tone detection, and response assistance
 - **Multi-Provider AI Support**: OpenAI-compatible providers, Ollama (local), and custom on-site endpoints
-- **Security-First Design**: Built-in classification detection (UNCLASSIFIED, SECRET, etc.) with compliance logging
 - **Accessible Interface**: Full keyboard navigation, screen reader support, and high-contrast mode
 - **Advanced Settings Management**: Persistent settings with Office 365 roaming and local backup
 - **Real-time Email Processing**: Extract email content, analyze sentiment, and generate contextual responses
@@ -61,7 +60,6 @@ npm run build
 ### Core Services Architecture
 - **EmailAnalyzer**: Extracts and processes email content from Office.js API
 - **AIService**: Multi-provider AI integration (OpenAI-compatible, Ollama, Custom on-site providers)
-- **ClassificationDetector**: Security classification pattern matching and validation
 - **SettingsManager**: Dual-storage settings (Office.js roaming + localStorage backup)
 - **Logger**: Cloud telemetry via AWS API Gateway and Windows Application Log integration
 - **UIController**: State management, loading states, and user feedback
@@ -82,8 +80,6 @@ npm run build
 
 ## Security & Compliance
 
-- **Email Classification Detection**: Automatic detection of security markings (UNCLASSIFIED, CONFIDENTIAL, SECRET, TOP SECRET, COSMIC TOP SECRET)
-- **User Override Protection**: Warning system with mandatory user acknowledgment for classified content
 - **Audit Logging**: Comprehensive event logging to Windows Application Log with sanitized data
 - **Data Privacy**: Sensitive content filtering in logs and telemetry
 - **API Key Security**: Secure storage using Office.js roaming settings with localStorage fallback
@@ -146,9 +142,6 @@ Captured for each email analysis operation.
 | `model_name` | string | Specific model identifier | `"llama3:latest"` |
 | `email_length` | integer | Character count of email content |
 | `recipients_count` | integer | Number of email recipients |
-| `classification` | string | Detected security classification | `"SECRET"` |
-| `classification_detected` | boolean | Whether classification was found |
-| `has_markings` | boolean | Whether classification markings present |
 | `analysis_success` | boolean | Whether analysis completed successfully |
 | `refinement_count` | integer | Number of refinements performed |
 | `clipboard_used` | boolean | Whether response was copied |
@@ -161,49 +154,6 @@ Logged when user copies AI-generated response to clipboard.
 |-------|------|-------------|
 | `refinement_count` | integer | Number of refinements before copy |
 | `response_length` | integer | Character count of copied response |
-
-#### Security Classification Events
-
-**`classification_incompatible`**
-Triggered when email classification is incompatible with selected AI provider.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `conversationId` | string | Outlook conversation identifier |
-| `itemId` | string | Outlook item identifier |
-| `itemClass` | string | Outlook item class | `"IPM.Note"` |
-| `subjectHash` | string | Hashed email subject for correlation |
-| `bodyLength` | integer | Email body character count |
-| `hasAttachments` | boolean | Whether email has file attachments |
-| `hasInternetMessageId` | boolean | Whether email has internet message ID |
-| `itemType` | string | Type of Outlook item | `"message"` |
-| `isReply` | boolean | Whether this is a reply email |
-| `date` | string | Email timestamp |
-| `provider` | string | AI provider being used |
-| `classification` | string | Detected classification level |
-| `provider_supported_classifications` | array | Classifications this provider supports |
-
-**`classification_warning_overridden`**
-Logged when user chooses to proceed despite classification warnings.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `conversationId` | string | Outlook conversation identifier |
-| `itemId` | string | Outlook item identifier |
-| `itemClass` | string | Outlook item class |
-| `subjectHash` | string | Hashed email subject |
-| `bodyLength` | integer | Email body character count |
-| `hasAttachments` | boolean | Whether email has attachments |
-| `hasInternetMessageId` | boolean | Whether email has message ID |
-| `itemType` | string | Outlook item type |
-| `isReply` | boolean | Whether this is a reply |
-| `date` | string | Email timestamp |
-| `classification_detected` | string | Detected classification level |
-| `classification_restricted` | boolean | Whether classification is restricted |
-| `classification_markings_count` | integer | Number of classification markings found |
-| `provider_used` | string | AI provider selected |
-| `provider_supported_classifications` | array | Supported classifications |
-| `warning_type` | string | Type of warning displayed | `"user_override"` |
 
 #### Performance Events
 
@@ -247,20 +197,6 @@ Based on live telemetry data, here are actual event examples:
 
 ```json
 {
-  "eventType": "classification_warning_overridden",
-  "timestamp": "2025-08-26T02:19:13.110Z",
-  "source": "PromptEmail",
-  "sessionId": "sess_1756174747068_pvgpfsa04",
-  "userContext": {"email": "user@domain.com"},
-  "classification_detected": "SECRET",
-  "provider_used": "ollama",
-  "provider_supported_classifications": ["UNCLASSIFIED"],
-  "warning_type": "user_override"
-}
-```
-
-```json
-{
   "eventType": "email_analyzed",
   "timestamp": "2025-08-26T02:19:33.491Z",
   "sessionId": "sess_1756174747068_pvgpfsa04",
@@ -269,9 +205,6 @@ Based on live telemetry data, here are actual event examples:
   "model_name": "llama3:latest",
   "email_length": 45,
   "recipients_count": 1,
-  "classification": "SECRET",
-  "classification_detected": true,
-  "has_markings": true,
   "analysis_success": true
 }
 ```
@@ -304,11 +237,10 @@ Tracks which features are being utilized.
 ### Data Privacy & Security
 
 #### Sanitization Rules
-- **Email Content**: Never logged or transmitted (content is classified as "SECRET" etc.)
+- **Email Content**: Never logged or transmitted to protect user privacy
 - **Email Subjects**: Never logged in plain text - only hashed subjectHash for correlation
 - **API Keys**: Completely filtered from all telemetry  
 - **Personal Information**: Email addresses are the only user identifier (required for user journey tracking)
-- **Classification Content**: Only classification level logged, never the actual classified content
 - **Error Messages**: Sensitive paths and credentials stripped from stack traces
 - **Email Metadata**: Outlook IDs are hashed or used only for session correlation
 
@@ -316,7 +248,7 @@ Tracks which features are being utilized.
 - **Consistent Identification**: All events include userContext.email for user journey tracking
 - **Session Correlation**: sessionId links all events in a user workflow
 - **Privacy Balance**: Minimal user data while enabling operational analytics
-- **Compliance**: User identification supports audit requirements for classified content handling
+- **Compliance**: User identification supports audit requirements for secure data handling
 
 #### Retention Policy
 - **Real-time Data**: 90 days for operational monitoring
@@ -327,7 +259,7 @@ Tracks which features are being utilized.
 #### Compliance Features
 - **GDPR**: Anonymized user contexts and data minimization
 - **SOC 2**: Secure transmission and access controls
-- **Security Classifications**: Proper handling of government classification markings
+- **Data Security**: Proper handling of sensitive email content and user information
 - **Audit Trail**: Complete event lineage for security reviews
 
 ## Directory Structure
@@ -338,7 +270,6 @@ Tracks which features are being utilized.
 │   ├── services/              # Core business logic services
 │   │   ├── AIService.js       # Multi-provider AI integration
 │   │   ├── EmailAnalyzer.js   # Email content extraction
-│   │   ├── ClassificationDetector.js # Security classification detection
 │   │   ├── SettingsManager.js # Persistent settings management
 │   │   └── Logger.js          # Windows event logging
 │   ├── ui/                    # UI components and accessibility
